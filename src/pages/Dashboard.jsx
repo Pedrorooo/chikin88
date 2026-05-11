@@ -28,19 +28,23 @@ export default function Dashboard() {
 
       const [oRes, eRes] = await Promise.all([
         supabase.from('orders')
-          .select('id, total, payment_method, status, created_at, order_items(product_name, quantity, subtotal)')
-          .gte('created_at', start).lte('created_at', end),
+          .select('id, total, payment_method, status, created_at, deleted_from_reports, benefit_type, order_items(product_name, quantity, subtotal)')
+          .gte('created_at', start).lte('created_at', end)
+          .eq('deleted_from_reports', false)
+          .limit(5000),
         supabase.from('expenses')
-          .select('amount').gte('expense_date', start.slice(0,10)).lte('expense_date', end.slice(0,10)),
+          .select('amount').gte('expense_date', start.slice(0,10)).lte('expense_date', end.slice(0,10))
+          .limit(2000),
       ])
 
       const orders = oRes.data || []
       const valid = orders.filter(o => o.status !== 'cancelado')
+      const rev   = valid.filter(o => o.benefit_type !== 'courtesy')
       const expenses = eRes.data || []
 
-      const revenue   = valid.reduce((s, o) => s + Number(o.total || 0), 0)
-      const cash      = valid.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
-      const transfer  = valid.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
+      const revenue   = rev.reduce((s, o) => s + Number(o.total || 0), 0)
+      const cash      = rev.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
+      const transfer  = rev.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
       const expSum    = expenses.reduce((s, e) => s + Number(e.amount || 0), 0)
 
       // Top productos

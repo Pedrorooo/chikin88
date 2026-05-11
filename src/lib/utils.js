@@ -42,6 +42,23 @@ export const SAUCES = [
   'Limón y pimienta',
   'Ajo parmesano',
   'Miel y mostaza',
+  'Acevichada',
+]
+
+// ----- Modos de salsa (solo aplican a productos que admiten salsa) -----
+export const SAUCE_MODES = [
+  { v: 'normal', l: 'Con salsa',  hint: 'Sobre el pollo' },
+  { v: 'sin',    l: 'Sin salsa',  hint: 'Sin salsa' },
+  { v: 'aparte', l: 'Aparte',     hint: 'Salsa por separado' },
+  { v: 'extra',  l: 'Extra',      hint: '+$0.25 salsa abundante' },
+]
+// Recargo por el modo "Extra" (independiente del recargo por cantidad de salsas)
+export const SAUCE_EXTRA_MODE_PRICE = 0.25
+
+// ----- Tipos de ramen -----
+export const RAMEN_TYPES = [
+  { v: 'picante',   l: 'Picante'   },
+  { v: 'carbonara', l: 'Carbonara' },
 ]
 
 // ----- Tarifas de extras -----
@@ -55,11 +72,20 @@ export const PALILLOS_EXTRA_PRICE = 0.25
 // Si no viene, asumimos 1 por compatibilidad.
 export const itemFreeSauces = (item) => item.free_sauces ?? 1
 
-export const itemExtraSauceCount = (item) =>
-  Math.max(0, (item.sauces?.length || 0) - itemFreeSauces(item))
+// Si el item está en modo "sin", no se cobran salsas extra.
+// Si está en modo "extra", siempre se suma SAUCE_EXTRA_MODE_PRICE por unidad además
+// de las salsas extra normales.
+export const itemExtraSauceCount = (item) => {
+  if (item.sauce_mode === 'sin') return 0
+  return Math.max(0, (item.sauces?.length || 0) - itemFreeSauces(item))
+}
 
-export const itemExtrasTotal = (item) =>
-  itemExtraSauceCount(item) * SAUCE_EXTRA_PRICE * item.quantity
+export const itemExtrasTotal = (item) => {
+  if (item.sauce_mode === 'sin') return 0
+  const extras = itemExtraSauceCount(item) * SAUCE_EXTRA_PRICE * item.quantity
+  const modeExtra = item.sauce_mode === 'extra' ? SAUCE_EXTRA_MODE_PRICE * item.quantity : 0
+  return extras + modeExtra
+}
 
 export const itemSubtotal = (item) =>
   item.unit_price * item.quantity + itemExtrasTotal(item)
@@ -98,4 +124,55 @@ export const monthRange = () => {
   const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
   const end   = new Date(); end.setHours(23,59,59,999)
   return { start: start.toISOString(), end: end.toISOString() }
+}
+
+// ============================================================
+//  Empleados — beneficios diarios y cortesías semanales
+// ============================================================
+
+// Lista oficial de empleados con sufijo 88 (sincronizada con tabla `employees`)
+export const EMPLOYEES = [
+  'Nicolas88', 'Cesar88', 'David88', 'Melany88', 'Nahomi88',
+  'Jhon88', 'Jhosep88', 'Victor88', 'Valeria88', 'Valentin88',
+  'Francisco88', 'Cindy88', 'Daivid88', 'Stephano88',
+]
+
+// Detecta empleado por nombre de cliente (case-insensitive).
+// Devuelve el nombre canónico (con mayúsculas correctas) o null.
+export const detectEmployee = (name) => {
+  if (!name) return null
+  const norm = name.trim().toLowerCase()
+  return EMPLOYEES.find(e => e.toLowerCase() === norm) || null
+}
+
+// Precios especiales para combos (descuento de empleado)
+export const EMPLOYEE_DISCOUNT_PRICES = {
+  'Combo Económico': 2.50,
+  'Combo Especial':  4.00,
+  'Combo XXL':       7.00,
+  'Combo Full':     15.50,
+}
+
+// Nombres de combos elegibles para descuento
+export const DISCOUNT_ELIGIBLE_COMBOS = Object.keys(EMPLOYEE_DISCOUNT_PRICES)
+
+// El único combo elegible para la cortesía semanal
+export const COURTESY_COMBO = 'Combo Especial'
+
+// ¿Es un combo aplicable al descuento?
+export const isDiscountEligibleCombo = (productName) =>
+  DISCOUNT_ELIGIBLE_COMBOS.includes(productName)
+
+// Devuelve el precio especial; si no hay descuento, retorna el regular
+export const employeeDiscountPrice = (productName) =>
+  EMPLOYEE_DISCOUNT_PRICES[productName] ?? null
+
+// Mensajes de error según código de PostgreSQL del trigger
+export const parseBenefitError = (msg) => {
+  if (!msg) return 'No se pudo crear el pedido'
+  // Mensajes del trigger handle_benefit_order
+  if (msg.includes('EMPLOYEE_NOT_FOUND')) return 'Empleado no encontrado'
+  if (msg.includes('ya usó su descuento')) return msg.split('ERROR:').pop().trim()
+  if (msg.includes('ya usó su Combo Especial gratis')) return msg.split('ERROR:').pop().trim()
+  return msg
 }

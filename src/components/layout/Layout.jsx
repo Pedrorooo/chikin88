@@ -2,7 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import {
   ListOrdered, PlusCircle, ChefHat, BarChart3,
-  Receipt, FileText, LogOut, Moon, Sun, Menu, X,
+  Receipt, FileText, LogOut, Moon, Sun, Menu, X, ArchiveX,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuthStore } from '../../store/authStore'
@@ -33,6 +33,7 @@ export default function Layout() {
     { to: '/dashboard', icon: BarChart3,   label: 'Dashboard', show: isAdmin },
     { to: '/gastos',    icon: Receipt,     label: 'Gastos',    show: isAdmin },
     { to: '/reportes',  icon: FileText,    label: 'Reportes',  show: isAdmin },
+    { to: '/anulados',  icon: ArchiveX,    label: 'Anulados',  show: isAdmin },
   ].filter(i => i.show)
 
   const handleLogout = async () => {

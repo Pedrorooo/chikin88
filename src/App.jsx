@@ -12,6 +12,7 @@ import Kitchen from './pages/Kitchen'
 import Dashboard from './pages/Dashboard'
 import Expenses from './pages/Expenses'
 import Reports from './pages/Reports'
+import AnulledOrders from './pages/AnulledOrders'
 
 export default function App() {
   const { init, loading, session } = useAuthStore()
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="/dashboard" element={<ProtectedRoute roles={['admin']}><Dashboard /></ProtectedRoute>} />
         <Route path="/gastos"    element={<ProtectedRoute roles={['admin']}><Expenses /></ProtectedRoute>} />
         <Route path="/reportes"  element={<ProtectedRoute roles={['admin']}><Reports /></ProtectedRoute>} />
+        <Route path="/anulados"  element={<ProtectedRoute roles={['admin']}><AnulledOrders /></ProtectedRoute>} />
       </Route>
 
       <Route path="*" element={<Navigate to="/pedidos" />} />

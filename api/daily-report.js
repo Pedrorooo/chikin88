@@ -36,21 +36,24 @@ export default async function handler(req, res) {
     const endUTC   = new Date(Date.UTC(y, m, d + 1, 4, 59, 59)).toISOString()
     const dayStr   = ec.toISOString().slice(0, 10) // YYYY-MM-DD
 
-    // Pedidos del día
+    // Pedidos del día (excluye anulados)
     const { data: orders } = await supa.from('orders')
       .select('*, order_items(product_name, product_category, quantity, subtotal)')
       .gte('created_at', startUTC).lte('created_at', endUTC)
+      .eq('deleted_from_reports', false)
 
     // Gastos del día
     const { data: expenses } = await supa.from('expenses')
       .select('*').eq('expense_date', dayStr)
 
     const valid = (orders || []).filter(o => o.status !== 'cancelado')
+    const rev = valid.filter(o => o.benefit_type !== 'courtesy')
     const cancelled = (orders || []).filter(o => o.status === 'cancelado')
-    const revenue = valid.reduce((s, o) => s + Number(o.total || 0), 0)
+    const courtesies = valid.filter(o => o.benefit_type === 'courtesy')
+    const revenue = rev.reduce((s, o) => s + Number(o.total || 0), 0)
     const expenseTotal = (expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0)
-    const cash = valid.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
-    const tx   = valid.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
+    const cash = rev.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
+    const tx   = rev.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
 
     // Productos top
     const map = new Map()

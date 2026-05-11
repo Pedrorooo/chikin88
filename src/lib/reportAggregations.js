@@ -6,9 +6,16 @@ const MONTH_LABELS = [
   'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
 ]
 
-// Pedidos válidos = no cancelados
+// Pedidos válidos = no cancelados y no anulados del reporte
 export const validOrders = (orders) =>
-  (orders || []).filter(o => o.status !== 'cancelado')
+  (orders || []).filter(o =>
+    o.status !== 'cancelado' &&
+    o.deleted_from_reports !== true
+  )
+
+// Solo pedidos que generan ingresos reales (no cortesías)
+export const revenueOrders = (orders) =>
+  validOrders(orders).filter(o => o.benefit_type !== 'courtesy')
 
 // ---------- Agrupar pedidos por bucket de tiempo ----------
 // granularity: 'hour' | 'day' | 'month'
@@ -122,12 +129,16 @@ export const monthlyProfit = (orders, expenses, year) => {
 // ---------- KPIs del rango ----------
 export const computeKpis = (orders, expenses) => {
   const valid = validOrders(orders)
-  const revenue = valid.reduce((s, o) => s + Number(o.total || 0), 0)
+  const rev   = revenueOrders(orders)
+  const revenue = rev.reduce((s, o) => s + Number(o.total || 0), 0)
   const expSum  = (expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0)
   const cancelled = (orders || []).filter(o => o.status === 'cancelado').length
-  const avgTicket = valid.length ? revenue / valid.length : 0
-  const cash    = valid.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
-  const transfer = valid.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
+  const anulled = (orders || []).filter(o => o.deleted_from_reports === true).length
+  const courtesies = valid.filter(o => o.benefit_type === 'courtesy').length
+  const discounts  = valid.filter(o => o.benefit_type === 'discount').length
+  const avgTicket = rev.length ? revenue / rev.length : 0
+  const cash     = rev.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
+  const transfer = rev.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
   return {
     orderCount: valid.length,
     revenue,
@@ -135,6 +146,9 @@ export const computeKpis = (orders, expenses) => {
     profit: revenue - expSum,
     avgTicket,
     cancelled,
+    anulled,
+    courtesies,
+    discounts,
     cash,
     transfer,
   }

@@ -167,10 +167,15 @@ function OrderCard({ order, onAdvance, onCancel }) {
           </span>
           {!order.with_mayo && <span className="chip bg-rose-500 text-white">SIN mayo</span>}
           <span className="chip bg-chikin-yellow text-chikin-black uppercase">{order.utensil}</span>
+          {order.benefit_type && (
+            <span className="chip bg-purple-600 text-white uppercase font-extrabold">
+              {order.benefit_type === 'discount' ? '⭐ Empleado' : '🎁 Cortesía'}
+            </span>
+          )}
         </div>
 
         {/* Items */}
-        <ul className="space-y-1 mb-3 bg-white/60 dark:bg-black/30 rounded-xl p-3 text-sm">
+        <ul className="space-y-2 mb-3 bg-white/60 dark:bg-black/30 rounded-xl p-3 text-sm">
           {items.map(it => (
             <li key={it.id} className="flex flex-col">
               <div className="flex items-baseline justify-between">
@@ -179,8 +184,37 @@ function OrderCard({ order, onAdvance, onCancel }) {
                 </span>
                 <span className="text-xs text-zinc-500">{money(it.subtotal)}</span>
               </div>
-              {it.sauces && it.sauces.length > 0 && (
-                <div className="text-xs text-zinc-600 dark:text-zinc-300">
+              {/* Tipo de ramen */}
+              {it.ramen_type && (
+                <div className="text-xs font-bold mt-0.5">
+                  <span className={cx(
+                    'inline-block px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide',
+                    it.ramen_type === 'picante'
+                      ? 'bg-chikin-red text-white'
+                      : 'bg-amber-500 text-white'
+                  )}>
+                    {it.ramen_type === 'picante' ? '🔥 Picante' : '🥛 Carbonara'}
+                  </span>
+                </div>
+              )}
+              {/* Modo de salsa para pollo */}
+              {it.sauce_mode && it.sauce_mode !== 'normal' && (
+                <div className="text-xs font-bold mt-0.5">
+                  <span className={cx(
+                    'inline-block px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide',
+                    it.sauce_mode === 'sin' && 'bg-rose-500 text-white',
+                    it.sauce_mode === 'aparte' && 'bg-blue-500 text-white',
+                    it.sauce_mode === 'extra' && 'bg-chikin-yellow text-chikin-black'
+                  )}>
+                    {it.sauce_mode === 'sin'    && '🚫 Sin salsa'}
+                    {it.sauce_mode === 'aparte' && '📦 Salsa aparte'}
+                    {it.sauce_mode === 'extra'  && '➕ Salsa extra'}
+                  </span>
+                </div>
+              )}
+              {/* Lista de salsas (oculta si modo = sin) */}
+              {it.sauces && it.sauces.length > 0 && it.sauce_mode !== 'sin' && (
+                <div className="text-xs text-zinc-600 dark:text-zinc-300 mt-0.5">
                   Salsas: {it.sauces.join(', ')}
                 </div>
               )}

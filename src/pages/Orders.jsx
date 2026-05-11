@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, memo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Filter, Edit, Trash2, Bike, ShoppingBag, Clock,
@@ -24,7 +24,7 @@ const FILTERS = [
 export default function Orders() {
   const navigate = useNavigate()
   const { profile } = useAuthStore()
-  const { orders, todayOrders, fetchToday, cancelOrder, deleteOrder } = useOrderStore()
+  const { orders, todayOrders, fetchToday, cancelOrder, softDeleteOrder } = useOrderStore()
   const [filter, setFilter] = useState('activos')
   const [editing, setEditing] = useState(null)
 
@@ -60,20 +60,20 @@ export default function Orders() {
     } catch { toast.error('No se pudo cancelar') }
   }
 
-  const handleDelete = async (o) => {
-    const msg = `⚠️ Vas a BORRAR PERMANENTEMENTE el pedido #${o.order_number}\n` +
+  const handleAnular = async (o) => {
+    const msg = `¿Anular pedido #${o.order_number} del reporte?\n\n` +
                 `Cliente: ${o.customer_name}\n` +
                 `Total: $${Number(o.total).toFixed(2)}\n\n` +
-                `Esto NO se puede deshacer y afectará los reportes.\n\n` +
-                `¿Continuar?`
+                `El pedido NO se elimina (queda en historial de anulaciones), ` +
+                `pero deja de contar en ventas y reportes financieros.`
     if (!window.confirm(msg)) return
-    if (!window.confirm('Confirmación final: ¿borrar este pedido para siempre?')) return
+    const reason = window.prompt('Motivo de la anulación (opcional):') || null
     try {
-      await deleteOrder(o.id)
-      toast.success(`Pedido #${o.order_number} eliminado`)
+      await softDeleteOrder(o.id, reason, profile?.id)
+      toast.success(`Pedido #${o.order_number} anulado`)
     } catch (err) {
       console.error(err)
-      toast.error('No se pudo borrar el pedido')
+      toast.error('No se pudo anular el pedido')
     }
   }
 
@@ -126,7 +126,7 @@ export default function Orders() {
                         canEdit={canEdit} isAdmin={isAdmin}
                         onEdit={() => setEditing(o)}
                         onCancel={() => handleCancel(o)}
-                        onDelete={() => handleDelete(o)} />
+                        onAnular={() => handleAnular(o)} />
             ))}
           </AnimatePresence>
         </div>
@@ -137,11 +137,12 @@ export default function Orders() {
   )
 }
 
-function OrderRow({ order, canEdit, isAdmin, onEdit, onCancel, onDelete }) {
+const OrderRow = memo(function OrderRow({ order, canEdit, isAdmin, onEdit, onCancel, onAnular }) {
   const mins = minutesSince(order.created_at)
   const bucket = ageBucket(mins)
   const isActive = ['pendiente','en_preparacion','listo'].includes(order.status)
   const isClosed = order.status === 'entregado' || order.status === 'cancelado'
+  const isDelivered = order.status === 'entregado'
 
   return (
     <motion.div
@@ -162,9 +163,33 @@ function OrderRow({ order, canEdit, isAdmin, onEdit, onCancel, onDelete }) {
       </div>
 
       <div className="font-bold mb-1">{order.customer_name}</div>
-      <div className="text-xs text-zinc-500 mb-2">
-        {fmtTime(order.created_at)} · {isActive ? `${mins} min` : 'cerrado'}
-      </div>
+
+      {/* Tiempos: en entregado, mostrar creado + entregado. Si activo, mostrar minutos. */}
+      {isDelivered ? (
+        <div className="text-xs text-zinc-500 mb-2 space-y-0.5">
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-zinc-400 w-16">Creado:</span>
+            <span className="font-bold text-zinc-700 dark:text-zinc-200">{fmtTime(order.created_at)}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-zinc-400 w-16">Entregado:</span>
+            <span className="font-bold text-emerald-600">
+              {order.delivered_at ? fmtTime(order.delivered_at) : '—'}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="text-xs text-zinc-500 mb-2">
+          {fmtTime(order.created_at)} · {isActive ? `${mins} min` : 'cerrado'}
+        </div>
+      )}
+
+      {/* Indicador de beneficio empleado */}
+      {order.benefit_type && (
+        <div className="mb-2 text-[10px] font-extrabold inline-block px-2 py-0.5 rounded bg-chikin-yellow text-chikin-black">
+          {order.benefit_type === 'discount' ? '⭐ DESCUENTO EMPLEADO' : '🎁 CORTESÍA EMPLEADO'} · {order.benefit_employee}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-1 mb-2 text-[10px]">
         {order.is_delivery
@@ -199,18 +224,18 @@ function OrderRow({ order, canEdit, isAdmin, onEdit, onCancel, onDelete }) {
             </>
           )}
           {isAdmin && isClosed && (
-            <button onClick={onDelete}
+            <button onClick={onAnular}
                     className="btn bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 px-3 py-2 hover:bg-rose-200 dark:hover:bg-rose-900/50 transition"
-                    title="Borrar pedido permanentemente">
+                    title="Anular pedido del reporte (no borra)">
               <Trash2 size={14}/>
-              <span className="text-[10px] font-bold ml-1">BORRAR</span>
+              <span className="text-[10px] font-bold ml-1">ANULAR</span>
             </button>
           )}
         </div>
       </div>
     </motion.div>
   )
-}
+})
 
 function EditModal({ order, onClose }) {
   const updateOrder = useOrderStore(s => s.updateOrder)

@@ -76,7 +76,15 @@ create table if not exists public.orders (
   ready_at timestamptz,
   delivered_at timestamptz,
   cancelled_at timestamptz,
-  cancel_reason text
+  cancel_reason text,
+  -- Soft delete (anulación para reportes)
+  deleted_from_reports boolean not null default false,
+  deleted_at timestamptz,
+  deleted_by uuid references public.profiles(id) on delete set null,
+  delete_reason text,
+  -- Beneficios de empleado
+  benefit_type text check (benefit_type in ('discount','courtesy')),
+  benefit_employee text
 );
 
 create index if not exists idx_orders_status on public.orders(status);
@@ -95,6 +103,8 @@ create table if not exists public.order_items (
   unit_price numeric(10,2) not null,
   quantity int not null check (quantity > 0),
   sauces text[] default '{}',
+  sauce_mode text default 'normal' check (sauce_mode in ('normal','sin','aparte','extra')),
+  ramen_type text check (ramen_type in ('picante','carbonara')),
   subtotal numeric(10,2) not null,
   created_at timestamptz not null default now()
 );
@@ -257,10 +267,11 @@ alter publication supabase_realtime add table public.expenses;
 insert into public.products (name, category, price, allows_extras, free_sauces, display_order) values
   ('Combo XXL',           'Principales', 8.50, true,  1, -2),
   ('Combo Full',          'Principales',16.50, true,  3, -1),
-  ('Chikin 3.50',         'Principales', 3.50, true,  1,  1),
-  ('Chikin 5.50',         'Principales', 5.50, true,  1,  2),
+  ('Combo Económico',     'Principales', 3.50, true,  1,  1),
+  ('Combo Especial',      'Principales', 5.50, true,  1,  2),
   ('Ramen solo',          'Ramen',       5.50, false, 0,  3),
   ('Combo ramen',         'Ramen',       7.50, true,  1,  4),
+  ('Agua',                'Bebidas',     0.75, false, 0,  4),
   ('Bebida pequeña',      'Bebidas',     0.50, false, 0,  5),
   ('Bebida grande',       'Bebidas',     1.25, false, 0,  6),
   ('Bebida coreana funda','Bebidas',     3.00, false, 0,  7),
