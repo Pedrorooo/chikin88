@@ -2,6 +2,10 @@ import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
 import { useOrderStore } from './store/orderStore'
+import {
+  installVisibilityHandlers, warmUpSystem, markActivity,
+  startHeartbeat, stopHeartbeat,
+} from './lib/appHealth'
 
 import Layout from './components/layout/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -23,16 +27,67 @@ export default function App() {
 
   useEffect(() => { init() }, [init])
 
+  // ===== Realtime + warmup inicial =====
+  // Cuando hay sesión: hacemos warmup inicial, suscribimos realtime, traemos
+  // datos. Cuando no hay sesión: limpiamos todo.
   useEffect(() => {
     if (session) {
-      fetchActive()
-      fetchToday()
-      subscribe()
+      // Warmup inicial: refresca sesión si hace falta + ping de salud
+      warmUpSystem()
+        .then(() => {
+          fetchActive()
+          fetchToday()
+          subscribe()
+        })
+        .catch(() => {
+          // Warmup falló — los stores ya marcaron health a 'auth_expired' o
+          // 'offline'. La UI lo refleja. El usuario verá el indicador.
+          // Igual intentamos suscribir y cargar; el polling se encargará.
+          fetchActive()
+          fetchToday()
+          subscribe()
+        })
+      startHeartbeat()
     } else {
       unsubscribe()
+      stopHeartbeat()
     }
-    return () => unsubscribe()
-  }, [session, fetchActive, fetchToday, subscribe, unsubscribe])
+    return () => {
+      if (!session) {
+        unsubscribe()
+        stopHeartbeat()
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session])
+
+  // ===== Despertar de idle / sleep / background =====
+  useEffect(() => {
+    if (!session) return
+    const cleanup = installVisibilityHandlers({
+      onWake: () => {
+        // appHealth ya hizo warmup; aquí refrescamos data y realtime
+        subscribe()      // recrea canal si murió
+        fetchActive()
+        fetchToday()
+      },
+    })
+    return cleanup
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session])
+
+  // ===== Marcar actividad del usuario =====
+  useEffect(() => {
+    const onActivity = () => markActivity()
+    window.addEventListener('pointerdown', onActivity, { passive: true })
+    window.addEventListener('keydown', onActivity, { passive: true })
+    window.addEventListener('touchstart', onActivity, { passive: true })
+    return () => {
+      window.removeEventListener('pointerdown', onActivity)
+      window.removeEventListener('keydown', onActivity)
+      window.removeEventListener('touchstart', onActivity)
+    }
+  }, [])
 
   if (loading) {
     return (

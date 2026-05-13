@@ -7,6 +7,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuthStore } from '../../store/authStore'
 import { cx } from '../../lib/utils'
+import SystemReadyBadge from '../SystemReadyBadge'
 
 export default function Layout() {
   const { profile, signOut } = useAuthStore()
@@ -82,6 +83,9 @@ export default function Layout() {
             <p className="text-xs text-zinc-500 uppercase tracking-wider">Conectado como</p>
             <p className="font-bold truncate">{profile?.full_name || profile?.email}</p>
             <p className="text-xs text-chikin-yellow uppercase mt-0.5">{roleLabel}</p>
+            <div className="mt-2">
+              <SystemReadyBadge/>
+            </div>
           </div>
           <div className="flex gap-2">
             <button
@@ -109,7 +113,10 @@ export default function Layout() {
           </div>
           <span className="brand-mark">CHIKIN<span className="text-chikin-yellow">88</span></span>
         </div>
-        <button onClick={() => setOpen(true)} className="p-2"><Menu size={26}/></button>
+        <div className="flex items-center gap-2">
+          <SystemReadyBadge/>
+          <button onClick={() => setOpen(true)} className="p-2"><Menu size={26}/></button>
+        </div>
       </header>
 
       {/* ===== Drawer móvil ===== */}

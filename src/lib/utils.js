@@ -137,6 +137,31 @@ export const EMPLOYEES = [
   'Francisco88', 'Cindy88', 'Daivid88', 'Stephano88',
 ]
 
+// Subconjunto: dueños. No tienen límite diario ni semanal.
+// IMPORTANTE: mantener sincronizado con la columna `employees.role` en BD.
+export const OWNERS = ['Cindy88', 'Daivid88', 'Stephano88']
+
+export const isOwner = (name) => !!name && OWNERS.includes(name)
+
+// Etiqueta de badge según tipo de beneficio y si la persona es dueño.
+// format: 'long' (DESCUENTO EMPLEADO) | 'short' (EMP) | 'medium' (Empleado)
+export const benefitBadge = (type, employee, format = 'long') => {
+  const owner = isOwner(employee)
+  if (format === 'short') {
+    if (owner) return '👑 DUEÑO'
+    return type === 'discount' ? '⭐ EMP' : '🎁 CORT'
+  }
+  if (format === 'medium') {
+    if (owner) return '👑 Dueño'
+    return type === 'discount' ? '⭐ Empleado' : '🎁 Cortesía'
+  }
+  // long
+  if (owner) {
+    return type === 'discount' ? '👑 DESCUENTO DUEÑO' : '👑 CORTESÍA DUEÑO'
+  }
+  return type === 'discount' ? '⭐ DESCUENTO EMPLEADO' : '🎁 CORTESÍA EMPLEADO'
+}
+
 // Detecta empleado por nombre de cliente (case-insensitive).
 // Devuelve el nombre canónico (con mayúsculas correctas) o null.
 export const detectEmployee = (name) => {

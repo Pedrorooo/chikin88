@@ -1,24 +1,120 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Clock, Bike, ShoppingBag, Banknote, ArrowRightLeft, ChevronRight,
-  CheckCircle2, XCircle, ChefHat, Flame,
+  CheckCircle2, XCircle, ChefHat, Flame, RefreshCw, Wifi, WifiOff, Loader2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useOrderStore } from '../store/orderStore'
 import { ageBucket, minutesSince, money, cx, NEXT_STATUS, STATUS_LABEL, fmtTime, SAUCES } from '../lib/utils'
 
 export default function Kitchen() {
-  const orders     = useOrderStore(s => s.orders)
-  const updateStatus = useOrderStore(s => s.updateStatus)
-  const cancelOrder  = useOrderStore(s => s.cancelOrder)
+  const orders             = useOrderStore(s => s.orders)
+  const updateStatus       = useOrderStore(s => s.updateStatus)
+  const cancelOrder        = useOrderStore(s => s.cancelOrder)
+  const realtimeStatus     = useOrderStore(s => s.realtimeStatus)
+  const manualRefresh      = useOrderStore(s => s.manualRefresh)
+  const subscribe          = useOrderStore(s => s.subscribe)
+  const fetchActive        = useOrderStore(s => s.fetchActive)
+  const startKitchenPolling = useOrderStore(s => s.startKitchenPolling)
+  const stopKitchenPolling  = useOrderStore(s => s.stopKitchenPolling)
 
-  // re-renderiza cada 30s para refrescar el color/tiempo
+  const [refreshing, setRefreshing] = useState(false)
+  const [wakeLockActive, setWakeLockActive] = useState(false)
+
+  // Re-render cada 30s para refrescar color/tiempo (sin refetch).
   const [, setTick] = useState(0)
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 30_000)
     return () => clearInterval(id)
   }, [])
+
+  // Al montar: asegurar suscripción y polling de respaldo.
+  useEffect(() => {
+    fetchActive()
+    subscribe()
+    startKitchenPolling()
+    return () => {
+      stopKitchenPolling()
+    }
+  }, [fetchActive, subscribe, startKitchenPolling, stopKitchenPolling])
+
+  // ----- Screen Wake Lock: evita que la tablet se duerma -----
+  // API disponible en navegadores modernos. En iOS/Safari puede no estar.
+  // Si el wake lock se pierde (cambio de tab, etc.), lo re-pedimos al volver.
+  useEffect(() => {
+    let lock = null
+    let cancelled = false
+
+    const request = async () => {
+      if (!('wakeLock' in navigator)) return
+      if (document.visibilityState !== 'visible') return
+      try {
+        lock = await navigator.wakeLock.request('screen')
+        if (cancelled) { try { lock.release() } catch {}; return }
+        setWakeLockActive(true)
+        lock.addEventListener('release', () => {
+          setWakeLockActive(false)
+        })
+      } catch (err) {
+        // Permiso denegado o no soportado — no es crítico
+      }
+    }
+
+    request()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') request()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVisible)
+      if (lock) { try { lock.release() } catch {} }
+    }
+  }, [])
+
+  // Reconexión / refetch al volver visible la pestaña o recuperar foco.
+  // (App.jsx ya hace warmup global; aquí solo refrescamos cocina.)
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        subscribe()      // si el canal murió, lo recrea
+        fetchActive()    // recarga por si nos perdimos pedidos mientras dormía
+      }
+    }
+    const onFocus = () => { subscribe(); fetchActive() }
+    const onOnline = () => {
+      toast.success('Conexión restablecida', { icon: '🟢' })
+      subscribe(); fetchActive()
+    }
+    const onOffline = () => {
+      toast.error('Sin conexión a internet', { icon: '🔴', duration: 4000 })
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
+  }, [subscribe, fetchActive])
+
+  const handleManualRefresh = useCallback(async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    try {
+      await manualRefresh()
+      toast.success('Actualizado', { duration: 1200 })
+    } catch {
+      toast.error('Error al actualizar')
+    } finally {
+      setRefreshing(false)
+    }
+  }, [manualRefresh, refreshing])
 
   // Pedidos visibles para cocina: pendiente, en preparación, listo
   const visible = [...orders]
@@ -34,7 +130,7 @@ export default function Kitchen() {
   return (
     <div className="p-4 md:p-6 min-h-full bg-zinc-100 dark:bg-chikin-black">
       {/* Header cocina */}
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl bg-chikin-red flex items-center justify-center">
             <ChefHat className="text-chikin-yellow" size={24}/>
@@ -44,13 +140,46 @@ export default function Kitchen() {
             <p className="text-sm text-zinc-500">{visible.length} pedidos activos</p>
           </div>
         </div>
-        <div className="flex gap-2 text-xs font-semibold">
-          <span className="chip bg-emerald-100 text-emerald-700">0–10 min</span>
-          <span className="chip bg-yellow-100 text-yellow-800">11–20</span>
-          <span className="chip bg-orange-100 text-orange-800">21–30</span>
-          <span className="chip bg-rose-100 text-rose-800 animate-pulse">+30</span>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <RealtimeBadge status={realtimeStatus}/>
+          {wakeLockActive && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-bold border bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30"
+                  title="Modo cocina activo — pantalla no se dormirá">
+              <span className="w-2 h-2 rounded-full bg-blue-500"/>
+              <span className="hidden sm:inline">Modo cocina</span>
+            </span>
+          )}
+          <button onClick={handleManualRefresh} disabled={refreshing}
+            className="btn-lg bg-chikin-red text-white shadow-md shadow-chikin-red/30 hover:bg-chikin-red-dark disabled:opacity-60">
+            <RefreshCw size={18} className={cx(refreshing && 'animate-spin')}/>
+            <span className="hidden sm:inline">Actualizar</span>
+          </button>
         </div>
       </div>
+
+      {/* Buckets de tiempo */}
+      <div className="flex gap-2 text-xs font-semibold mb-5 overflow-x-auto pb-1">
+        <span className="chip bg-emerald-100 text-emerald-700 whitespace-nowrap">0–10 min</span>
+        <span className="chip bg-yellow-100 text-yellow-800 whitespace-nowrap">11–20</span>
+        <span className="chip bg-orange-100 text-orange-800 whitespace-nowrap">21–30</span>
+        <span className="chip bg-rose-100 text-rose-800 whitespace-nowrap animate-pulse">+30</span>
+      </div>
+
+      {/* Advertencia si está desconectado */}
+      {(realtimeStatus === 'reconnecting' || realtimeStatus === 'disconnected') && (
+        <div className="mb-4 p-3 rounded-xl bg-amber-100 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-900 flex items-center gap-2 text-sm text-amber-900 dark:text-amber-200">
+          <WifiOff size={16}/>
+          <span className="flex-1">
+            {realtimeStatus === 'reconnecting'
+              ? 'Reconectando al servicio en vivo… los pedidos nuevos podrían tardar en aparecer.'
+              : 'Sin conexión en vivo. Pulsa "Actualizar" para refrescar manualmente.'}
+          </span>
+          <button onClick={handleManualRefresh} className="btn bg-amber-600 text-white text-xs">
+            <RefreshCw size={12}/> Actualizar
+          </button>
+        </div>
+      )}
 
       {visible.length === 0 ? (
         <div className="text-center py-20">
@@ -66,6 +195,55 @@ export default function Kitchen() {
         </div>
       )}
     </div>
+  )
+}
+
+// ============================================================
+//  Indicador de estado del realtime
+// ============================================================
+function RealtimeBadge({ status }) {
+  const config = {
+    connected: {
+      icon: <Wifi size={14}/>,
+      label: 'En vivo',
+      cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30',
+      dotCls: 'bg-emerald-500 animate-pulse',
+    },
+    connecting: {
+      icon: <Loader2 size={14} className="animate-spin"/>,
+      label: 'Conectando…',
+      cls: 'bg-zinc-200 dark:bg-chikin-gray-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-chikin-gray-700',
+      dotCls: 'bg-zinc-400',
+    },
+    reconnecting: {
+      icon: <Loader2 size={14} className="animate-spin"/>,
+      label: 'Reconectando…',
+      cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
+      dotCls: 'bg-amber-500 animate-pulse',
+    },
+    disconnected: {
+      icon: <WifiOff size={14}/>,
+      label: 'Sin conexión',
+      cls: 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30',
+      dotCls: 'bg-rose-500',
+    },
+    idle: {
+      icon: <WifiOff size={14}/>,
+      label: 'Inactivo',
+      cls: 'bg-zinc-200 dark:bg-chikin-gray-800 text-zinc-500 border-zinc-300 dark:border-chikin-gray-700',
+      dotCls: 'bg-zinc-400',
+    },
+  }
+  const c = config[status] || config.idle
+  return (
+    <span className={cx(
+      'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold border',
+      c.cls
+    )} title={`Realtime: ${status}`}>
+      <span className={cx('w-2 h-2 rounded-full', c.dotCls)}/>
+      <span className="hidden sm:inline">{c.label}</span>
+      <span className="sm:hidden">{c.icon}</span>
+    </span>
   )
 }
 

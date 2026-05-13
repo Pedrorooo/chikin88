@@ -11,6 +11,7 @@ export const PRODUCTS = [
   // Ramen
   { name: 'Ramen solo',           category: 'Ramen',       price:  5.50, allows_extras: false, free_sauces: 0 },
   { name: 'Combo ramen',          category: 'Ramen',       price:  7.50, allows_extras: true,  free_sauces: 1 },
+  { name: 'Ramen sin preparar',   category: 'Ramen',       price:  4.50, allows_extras: false, free_sauces: 0 },
   // Bebidas
   { name: 'Agua',                 category: 'Bebidas',     price:  0.75, allows_extras: false, free_sauces: 0 },
   { name: 'Bebida pequeña',       category: 'Bebidas',     price:  0.50, allows_extras: false, free_sauces: 0 },
@@ -23,6 +24,8 @@ export const PRODUCTS = [
   { name: 'Pockys',               category: 'Extras',      price:  3.50, allows_extras: false, free_sauces: 0 },
   { name: 'Dulces',               category: 'Extras',      price:  1.50, allows_extras: false, free_sauces: 0 },
   { name: 'Gomitas Peel',         category: 'Extras',      price:  3.50, allows_extras: false, free_sauces: 0 },
+  { name: 'Porción de papas',     category: 'Extras',      price:  1.50, allows_extras: false, free_sauces: 0 },
+  { name: 'Caja extra',           category: 'Extras',      price:  0.25, allows_extras: false, free_sauces: 0 },
 ]
 
 export const CATEGORIES = ['Principales', 'Ramen', 'Bebidas', 'Extras']

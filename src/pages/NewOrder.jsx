@@ -4,19 +4,21 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Minus, Trash2, ShoppingBag, User, Phone, Bike,
   Banknote, ArrowRightLeft, MessageSquare, Check, Loader2,
-  Star, Flame, Soup,
+  Star, Flame, Soup, AlertTriangle, RotateCw,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useOrderStore } from '../store/orderStore'
 import { useAuthStore } from '../store/authStore'
 import { supabase } from '../lib/supabase'
+import { markActivity } from '../lib/appHealth'
+import { saveDraft, loadDraft, clearDraft, isDraftMeaningful } from '../lib/orderDraft'
 import { PRODUCTS, CATEGORIES, isRamenProduct, isChickenProduct } from '../data/products'
 import {
   SAUCES, SAUCE_MODES, RAMEN_TYPES,
   money, cx,
   SAUCE_EXTRA_PRICE, PALILLOS_EXTRA_PRICE,
   itemExtrasTotal, itemSubtotal, itemExtraSauceCount,
-  detectEmployee, isDiscountEligibleCombo,
+  detectEmployee, isOwner, isDiscountEligibleCombo,
   COURTESY_COMBO, employeeDiscountPrice,
 } from '../lib/utils'
 
@@ -29,7 +31,9 @@ export default function NewOrder() {
   const [activeCat, setActiveCat] = useState('Principales')
   const [items, setItems] = useState([])
   const [submitting, setSubmitting] = useState(false)
-  const submittingRef = useRef(false)  // Anti-doble-click hard
+  const [submitError, setSubmitError] = useState(null)
+  const submittingRef = useRef(false)         // Anti-doble-click hard
+  const clientRequestIdRef = useRef(null)     // Idempotency: mismo ID al reintentar
 
   // Datos del pedido
   const [customerName, setCustomerName]   = useState('')
@@ -44,6 +48,49 @@ export default function NewOrder() {
 
   // Beneficios de empleado
   const [benefitMode, setBenefitMode]     = useState(null)  // null | 'discount' | 'courtesy'
+
+  // ---------- Restaurar borrador al cargar ----------
+  // Si la app se cerró/recargó a mitad de pedido, recuperamos lo que había.
+  // Se ejecuta UNA SOLA VEZ al montar el componente.
+  const [draftRestored, setDraftRestored] = useState(false)
+  useEffect(() => {
+    if (draftRestored) return
+    const d = loadDraft()
+    if (d && isDraftMeaningful(d)) {
+      if (d.customerName)  setCustomerName(d.customerName)
+      if (d.customerPhone) setCustomerPhone(d.customerPhone)
+      if (d.orderType)     setOrderType(d.orderType)
+      if (typeof d.isDelivery === 'boolean') setIsDelivery(d.isDelivery)
+      if (d.deliveryFee)   setDeliveryFee(d.deliveryFee)
+      if (typeof d.withMayo === 'boolean') setWithMayo(d.withMayo)
+      if (d.utensil)       setUtensil(d.utensil)
+      if (d.paymentMethod) setPaymentMethod(d.paymentMethod)
+      if (d.notes)         setNotes(d.notes)
+      if (d.benefitMode)   setBenefitMode(d.benefitMode)
+      if (Array.isArray(d.items)) setItems(d.items)
+      if (d.clientRequestId) clientRequestIdRef.current = d.clientRequestId
+      toast('Borrador recuperado', { icon: '📋', duration: 2500 })
+    }
+    setDraftRestored(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ---------- Autosave del borrador (debounced) ----------
+  useEffect(() => {
+    if (!draftRestored) return
+    const draft = {
+      customerName, customerPhone, orderType, isDelivery, deliveryFee,
+      withMayo, utensil, paymentMethod, notes, benefitMode, items,
+      clientRequestId: clientRequestIdRef.current,
+    }
+    // Sólo guardamos si tiene contenido relevante
+    if (!isDraftMeaningful(draft)) return
+    const id = setTimeout(() => saveDraft(draft), 600)
+    return () => clearTimeout(id)
+  }, [
+    draftRestored, customerName, customerPhone, orderType, isDelivery, deliveryFee,
+    withMayo, utensil, paymentMethod, notes, benefitMode, items,
+  ])
 
   // ---------- Empleado detectado ----------
   const employee = useMemo(() => detectEmployee(customerName), [customerName])
@@ -217,21 +264,66 @@ export default function NewOrder() {
   }
 
   // ---------- Enviar ----------
+  // Si falla, mantenemos el formulario y mostramos un banner persistente con
+  // botón "Reintentar". El client_request_id se reusa al reintentar, así que
+  // si el pedido sí se creó en el primer intento (timeout ambiguo), no se duplica.
+  //
+  // El watchdog de UI es la ÚLTIMA línea de defensa: garantiza que el botón
+  // no quede colgado pase lo que pase, incluso si alguna promesa fallara
+  // en formas inesperadas.
   const submit = async () => {
     if (submittingRef.current) return
+    markActivity()
     const err = validate()
-    if (err) return toast.error(err)
+    if (err) {
+      setSubmitError(err)
+      return toast.error(err)
+    }
+
+    // Generar (o reusar) un client_request_id para idempotency.
+    let reqId = clientRequestIdRef.current
+    if (!reqId) {
+      reqId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      clientRequestIdRef.current = reqId
+    }
 
     submittingRef.current = true
     setSubmitting(true)
+    setSubmitError(null)
+
+    // ===== Watchdog UI =====
+    // Si en 15s no resolvió ni rechazó (por algún bug imposible), forzamos
+    // liberación del botón y mostramos error. Es defensa en profundidad
+    // sobre el timeout del fetch a /api/create-order (12s) que ya está
+    // en orderStore.
+    const WATCHDOG_MS = 15_000
+    let watchdogFired = false
+    const watchdogTimer = setTimeout(() => {
+      watchdogFired = true
+      console.warn('[NewOrder] WATCHDOG: liberando botón forzosamente')
+      submittingRef.current = false
+      setSubmitting(false)
+      setSubmitError('La operación tardó demasiado. Tus datos siguen aquí — pulsa Reintentar.')
+    }, WATCHDOG_MS)
 
     try {
+      // Nota: ya NO llamamos ensureSystemReady aquí. La creación del
+      // pedido va por /api/create-order, que abre conexión fresca a
+      // Supabase en el servidor. Esto hace que el botón funcione
+      // siempre, incluso si el cliente del navegador está stale.
+      //
+      // El warmup sigue ocurriendo en background (heartbeat + wake)
+      // para mantener Realtime y la sesión activos.
+
       const itemsWithSubtotal = items.map(it => ({
         ...it,
         subtotal: itemSubtotal(it),
       }))
 
       await createOrder({
+        client_request_id: reqId,
         customer_name:    customerName.trim(),
         customer_phone:   customerPhone.trim() || null,
         order_type:       orderType,
@@ -249,15 +341,30 @@ export default function NewOrder() {
         benefit_employee: benefitMode ? employee : null,
       }, itemsWithSubtotal)
 
+      // Si el watchdog ya disparó, no anulamos su estado (el pedido
+      // pudo haberse creado igual, pero ya mostramos error al usuario).
+      if (watchdogFired) return
+
+      // Éxito: limpiar borrador y client_request_id para el siguiente pedido
+      clearDraft()
+      clientRequestIdRef.current = null
+
       toast.success('¡Pedido enviado a cocina!', { icon: '🔥' })
       navigate('/pedidos')
     } catch (err) {
-      console.error(err)
-      // El error ya viene formateado por orderStore (parseBenefitError)
-      toast.error(err.message || 'No se pudo crear el pedido')
+      if (watchdogFired) return  // ya manejado por el watchdog
+      console.error('createOrder failed:', err)
+      const msg = err?.message || 'No se pudo crear el pedido'
+      setSubmitError(msg)
+      toast.error(msg, { duration: 5000 })
+      // NO limpiamos el formulario ni el client_request_id, así el reintento
+      // es idempotente y el camarero no pierde el trabajo.
     } finally {
-      submittingRef.current = false
-      setSubmitting(false)
+      clearTimeout(watchdogTimer)
+      if (!watchdogFired) {
+        submittingRef.current = false
+        setSubmitting(false)
+      }
     }
   }
 
@@ -312,8 +419,15 @@ export default function NewOrder() {
                   )}
                 >
                   {(specialPrice !== null || courtesyFree) && (
-                    <span className="absolute -top-2 -right-2 bg-chikin-yellow text-chikin-black text-[9px] font-extrabold px-2 py-1 rounded-full shadow-md">
-                      {courtesyFree ? '🎁 GRATIS' : '⭐ EMPLEADO'}
+                    <span className={cx(
+                      'absolute -top-2 -right-2 text-[9px] font-extrabold px-2 py-1 rounded-full shadow-md',
+                      isOwner(employee)
+                        ? 'bg-amber-400 text-amber-900'
+                        : 'bg-chikin-yellow text-chikin-black'
+                    )}>
+                      {isOwner(employee)
+                        ? (courtesyFree ? '👑 GRATIS' : '👑 DUEÑO')
+                        : (courtesyFree ? '🎁 GRATIS' : '⭐ EMPLEADO')}
                     </span>
                   )}
                   <div className="text-xs uppercase tracking-wider text-zinc-400 mb-1">
@@ -350,10 +464,11 @@ export default function NewOrder() {
 
         {/* ========== DERECHA: ticket ========== */}
         <div className="space-y-4">
-          {/* Banner empleado detectado */}
+          {/* Banner empleado/dueño detectado */}
           {employee && (
             <EmployeeBanner
               name={employee}
+              owner={isOwner(employee)}
               benefitMode={benefitMode}
               onSetMode={setBenefitMode}
               savings={discountSavings}
@@ -567,14 +682,35 @@ export default function NewOrder() {
       <div className="fixed lg:static bottom-0 left-0 right-0 p-4 bg-white dark:bg-chikin-black
                       border-t lg:border-t-0 border-zinc-200 dark:border-chikin-gray-700
                       lg:mt-6 lg:p-0 z-30">
+        {/* Banner persistente de error: no se borra al cambiar pantalla, sólo al reintentar y tener éxito */}
+        {submitError && !submitting && (
+          <div className="mb-3 p-3 rounded-xl bg-rose-100 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-900 flex items-start gap-2">
+            <AlertTriangle className="text-rose-600 shrink-0 mt-0.5" size={18}/>
+            <div className="flex-1 text-sm">
+              <div className="font-bold text-rose-700 dark:text-rose-300">No se pudo enviar el pedido</div>
+              <div className="text-xs text-rose-600 dark:text-rose-400 mt-0.5">{submitError}</div>
+              <div className="text-[10px] text-zinc-500 mt-1 italic">
+                Tus datos están guardados. Pulsa "Reintentar" y el sistema evitará duplicados automáticamente.
+              </div>
+            </div>
+            <button
+              onClick={submit}
+              className="btn bg-rose-600 text-white text-xs hover:bg-rose-700">
+              <RotateCw size={12}/> Reintentar
+            </button>
+          </div>
+        )}
+
         <button
           onClick={submit}
           disabled={submitting || items.length === 0}
           className="w-full btn-xl bg-chikin-red text-white shadow-2xl shadow-chikin-red/40
                      hover:bg-chikin-red-dark uppercase tracking-wider disabled:opacity-60 disabled:cursor-not-allowed">
           {submitting
-            ? <><Loader2 className="animate-spin"/> Enviando...</>
-            : <><Check size={24}/> Enviar a cocina · {money(total)}</>
+            ? <><Loader2 className="animate-spin"/> Enviando…</>
+            : submitError
+              ? <><RotateCw size={22}/> Reintentar envío · {money(total)}</>
+              : <><Check size={24}/> Enviar a cocina · {money(total)}</>
           }
         </button>
       </div>
@@ -583,18 +719,28 @@ export default function NewOrder() {
 }
 
 // ============================================================
-//  Banner de empleado detectado
+//  Banner de empleado / dueño detectado
 // ============================================================
-function EmployeeBanner({ name, benefitMode, onSetMode, savings }) {
+function EmployeeBanner({ name, owner, benefitMode, onSetMode, savings }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="card p-3 bg-gradient-to-br from-chikin-yellow/20 to-chikin-red/10 border-chikin-yellow"
+      className={cx(
+        'card p-3 bg-gradient-to-br',
+        owner
+          ? 'from-amber-300/30 to-amber-500/20 border-amber-400'
+          : 'from-chikin-yellow/20 to-chikin-red/10 border-chikin-yellow'
+      )}
     >
       <div className="flex items-center gap-2 mb-2">
-        <Star className="text-chikin-yellow fill-chikin-yellow" size={18}/>
-        <div className="font-bold text-sm">Empleado detectado: <span className="text-chikin-red">{name}</span></div>
+        {owner
+          ? <span className="text-lg">👑</span>
+          : <Star className="text-chikin-yellow fill-chikin-yellow" size={18}/>}
+        <div className="font-bold text-sm">
+          {owner ? 'Dueño detectado: ' : 'Empleado detectado: '}
+          <span className="text-chikin-red">{name}</span>
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-2 mb-2">
         <button
@@ -606,7 +752,7 @@ function EmployeeBanner({ name, benefitMode, onSetMode, savings }) {
               : 'bg-white dark:bg-chikin-gray-800 border-zinc-200 dark:border-chikin-gray-700 text-zinc-700 dark:text-zinc-200'
           )}
         >
-          💵 Descuento diario
+          💵 Descuento{owner ? '' : ' diario'}
         </button>
         <button
           onClick={() => onSetMode(benefitMode === 'courtesy' ? null : 'courtesy')}
@@ -617,20 +763,27 @@ function EmployeeBanner({ name, benefitMode, onSetMode, savings }) {
               : 'bg-white dark:bg-chikin-gray-800 border-zinc-200 dark:border-chikin-gray-700 text-zinc-700 dark:text-zinc-200'
           )}
         >
-          🎁 Cortesía semanal
+          🎁 Cortesía{owner ? '' : ' semanal'}
         </button>
       </div>
-      {benefitMode === 'discount' && (
+      {owner ? (
+        <div className="text-[11px] text-amber-800 dark:text-amber-300 italic font-semibold flex items-start gap-1">
+          <span>👑</span>
+          <span>
+            Beneficio de dueño · sin límites diarios ni semanales. Cada uso queda registrado en el historial.
+            {savings > 0 && <span className="block text-emerald-600 font-bold mt-0.5">Ahorro: {money(savings)}</span>}
+          </span>
+        </div>
+      ) : benefitMode === 'discount' ? (
         <div className="text-[11px] text-zinc-600 dark:text-zinc-300 italic">
           Selecciona 1 combo para precio especial · El sistema validará que no lo hayas usado hoy.
           {savings > 0 && <span className="block text-emerald-600 font-bold mt-0.5">Ahorro: {money(savings)}</span>}
         </div>
-      )}
-      {benefitMode === 'courtesy' && (
+      ) : benefitMode === 'courtesy' ? (
         <div className="text-[11px] text-zinc-600 dark:text-zinc-300 italic">
           1 Combo Especial gratis a la semana · Solo se permite Combo Especial en este modo.
         </div>
-      )}
+      ) : null}
     </motion.div>
   )
 }
