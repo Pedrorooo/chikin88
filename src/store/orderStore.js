@@ -37,6 +37,37 @@ let kitchenLastPoll = 0
 const withTimeout = withTimeoutShared
 
 // ============================================================
+//  Helper: leer access_token SÍNCRONO de localStorage.
+//
+//  NO toca el SDK de Supabase. NO se puede colgar. NO necesita await.
+//
+//  Esto es lo único que necesitamos para autenticar el POST al
+//  endpoint serverless. El servidor valida el JWT contra Supabase
+//  Auth directamente, así que aunque el token esté un poco vencido,
+//  el servidor te dice claramente y el frontend muestra el error.
+//  No es nuestro problema "refrescar" antes — el endpoint lo
+//  detecta y responde 401.
+// ============================================================
+function readAccessTokenSync() {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith('sb-') && k.endsWith('-auth-token')) {
+        const raw = localStorage.getItem(k)
+        if (!raw) continue
+        const parsed = JSON.parse(raw)
+        // Estructura nueva: { access_token, refresh_token, expires_at, ... }
+        // Estructura antigua: { currentSession: { access_token, ... } }
+        return parsed?.access_token || parsed?.currentSession?.access_token || null
+      }
+    }
+  } catch (e) {
+    // Si JSON.parse falla o no hay localStorage, no hay token
+  }
+  return null
+}
+
+// ============================================================
 //  STORE
 // ============================================================
 export const useOrderStore = create((set, get) => ({
@@ -70,7 +101,9 @@ export const useOrderStore = create((set, get) => ({
       log('fetchActive OK', data?.length)
     } catch (err) {
       console.error('fetchActive error:', err)
-      toast.error('No se pudieron cargar los pedidos')
+      // No mostramos toast: si Supabase está stale, no hay nada que el
+      // usuario pueda hacer y el ruido es molesto. El indicador de salud
+      // y el botón "Actualizar" en Cocina son los canales correctos.
     } finally {
       set({ loading: false, ready: true })
     }
@@ -260,39 +293,28 @@ export const useOrderStore = create((set, get) => ({
   createOrder: async (orderData, items) => {
     log('createOrder: starting')
 
-    // Obtener el token actual del usuario (sin pedir refresh — leemos
-    // directo de storage para no tocar el lock de auth)
-    let accessToken = null
-    try {
-      const { data } = await supabase.auth.getSession()
-      accessToken = data?.session?.access_token || null
-    } catch (e) {
-      // Si getSession fallara (lock zombi), intentamos leer del storage
-      log('createOrder: getSession falló, leyendo storage', e?.message)
-    }
-
-    if (!accessToken) {
-      // Fallback: leer la sesión directo de localStorage
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i)
-          if (k && k.startsWith('sb-') && k.endsWith('-auth-token')) {
-            const raw = localStorage.getItem(k)
-            if (raw) {
-              const parsed = JSON.parse(raw)
-              accessToken = (parsed?.currentSession?.access_token) || parsed?.access_token
-              break
-            }
-          }
-        }
-      } catch {}
-    }
-
+    // ===== 1. OBTENER TOKEN SIN TOCAR EL SDK DE SUPABASE =====
+    //
+    // CRÍTICO: lectura SÍNCRONA de localStorage. NO usamos
+    // supabase.auth.getSession() porque ese método agarra un lock
+    // interno del SDK que puede quedar zombi tras horas idle, dejando
+    // la promesa colgada para siempre (ni resuelve ni rechaza).
+    //
+    // localStorage es síncrono y no se puede colgar. Si la sesión
+    // está ahí (que es lo normal), la leemos en 1ms. Si no está,
+    // mostramos error claro. NUNCA hacemos await a nada del SDK
+    // antes del fetch al endpoint.
+    const accessToken = readAccessTokenSync()
     if (!accessToken) {
       throw new Error('Sesión expirada. Vuelve a iniciar sesión.')
     }
 
-    // Construir payload
+    // ===== 2. Validar online =====
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      throw new Error('Sin conexión a internet. Verifica el wifi.')
+    }
+
+    // ===== 3. Construir payload =====
     const subtotal = orderData.subtotal ?? items.reduce(
       (s, it) => s + (it.subtotal ?? it.unit_price * it.quantity), 0
     )
@@ -375,6 +397,18 @@ export const useOrderStore = create((set, get) => ({
     markSuccess()
     log('createOrder: OK en', Date.now() - t0, 'ms', result.order?.order_number,
         result.order?._idempotent_hit ? '(idempotent hit)' : '')
+
+    // ===== Refresh en BACKGROUND, sin await =====
+    // El pedido ya está creado y devuelto. Refrescamos las listas
+    // (Pedidos del día, Cocina) en segundo plano. Si esto falla por
+    // cualquier razón (red lenta, lock zombi del cliente Supabase),
+    // NO afecta al usuario — el pedido ya está confirmado. Las listas
+    // también se actualizarán solas vía Realtime + polling.
+    setTimeout(() => {
+      get().fetchActive().catch(() => {})
+      get().fetchToday(true).catch(() => {})
+    }, 0)
+
     return result.order
   },
 
