@@ -9,7 +9,7 @@
 //  se quedó colgado (típico tras pasar mucho tiempo con la tab
 //  oculta/idle), el lock queda tomado de por vida. CUALQUIER
 //  llamada futura a getSession/refreshSession se cuelga hasta
---  que se recargue la página.
+//  que se recargue la página.
 //
 //  SOLUCIÓN:
 //  ---------
