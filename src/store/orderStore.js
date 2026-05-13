@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
-import { withTimeout as withTimeoutShared, markSuccess } from '../lib/appHealth'
+import { supabaseWithTimeout, markSuccess } from '../lib/appHealth'
 import { useHealthStore } from './healthStore'
 
 // ============================================================
@@ -29,12 +29,6 @@ let lastTodayRefresh = 0
 // Polling de respaldo para cocina
 let kitchenPollTimer = null
 let kitchenLastPoll = 0
-
-// ============================================================
-//  Helper: envolver una promesa con timeout (usa el compartido
-//  de appHealth para evitar duplicación)
-// ============================================================
-const withTimeout = withTimeoutShared
 
 // ============================================================
 //  Helper: leer access_token SÍNCRONO de localStorage.
@@ -85,7 +79,7 @@ export const useOrderStore = create((set, get) => ({
   fetchActive: async () => {
     set({ loading: true })
     try {
-      const { data, error } = await withTimeout(
+      const { data, error } = await supabaseWithTimeout(
         supabase
           .from('orders')
           .select('*, order_items(*)')
@@ -100,7 +94,7 @@ export const useOrderStore = create((set, get) => ({
       set({ orders: data || [], lastSyncAt: Date.now() })
       log('fetchActive OK', data?.length)
     } catch (err) {
-      console.error('fetchActive error:', err)
+      console.error('fetchActive error:', err?.message || err)
       // No mostramos toast: si Supabase está stale, no hay nada que el
       // usuario pueda hacer y el ruido es molesto. El indicador de salud
       // y el botón "Actualizar" en Cocina son los canales correctos.
@@ -117,7 +111,7 @@ export const useOrderStore = create((set, get) => ({
 
     try {
       const start = new Date(); start.setHours(0, 0, 0, 0)
-      const { data, error } = await withTimeout(
+      const { data, error } = await supabaseWithTimeout(
         supabase
           .from('orders')
           .select('*, order_items(*)')
@@ -131,7 +125,7 @@ export const useOrderStore = create((set, get) => ({
       if (error) throw error
       set({ todayOrders: data || [], lastSyncAt: Date.now() })
     } catch (err) {
-      console.error('fetchToday error:', err)
+      console.error('fetchToday error:', err?.message || err)
       // no toast aquí; es refresco secundario, mejor no molestar
     }
   },
@@ -143,40 +137,49 @@ export const useOrderStore = create((set, get) => ({
   },
 
   // ============================================================
-  //  Polling de respaldo para Cocina (15-30s mientras visible)
+  //  Polling de respaldo GLOBAL
   // ============================================================
   //
-  //  El realtime websocket es la fuente primaria. El polling es
-  //  un respaldo por si el websocket muere silenciosamente o
-  //  se pierden eventos cuando la tablet duerme. Es lightweight:
-  //  sólo trae los pedidos activos, no reportes ni historial.
+  //  El realtime websocket es la fuente primaria. El polling es un
+  //  respaldo por si el websocket muere silenciosamente o se pierden
+  //  eventos cuando la tablet duerme.
+  //
+  //  Este polling vive a nivel App (mientras hay sesión), no solo
+  //  cuando se monta Cocina. Así Pedidos/Cocina ven los cambios
+  //  aunque el websocket esté caído.
+  //
+  //  Cadencia adaptativa:
+  //    • Realtime conectado + tab visible       → cada 30s
+  //    • Realtime conectado + tab oculta        → no hacer nada
+  //    • Realtime caído + tab visible           → cada 10s (agresivo)
+  //    • Realtime caído + tab oculta            → no hacer nada
   // ============================================================
-  startKitchenPolling: () => {
+  startGlobalPolling: () => {
     if (kitchenPollTimer) return  // ya activo
-    log('kitchen polling: start')
-    const tick = () => {
-      // Sólo si visible y conectado (o intentando reconectar)
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
-      get().fetchActive().catch(() => {})
-    }
-    // Cadencia adaptativa: más rápido si el realtime no está conectado
+    log('global polling: start')
     kitchenPollTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
       const rt = get().realtimeStatus
-      // Si realtime conectado, 30s. Si reconectando/desconectado, 10s.
       const desired = rt === 'connected' ? 30_000 : 10_000
       if (Date.now() - kitchenLastPoll < desired) return
       kitchenLastPoll = Date.now()
-      tick()
+      // Refrescamos ambas listas en background, sin bloquear
+      get().fetchActive().catch(() => {})
+      get().fetchToday(true).catch(() => {})
     }, 5_000)  // chequeo cada 5s, decide internamente
   },
 
-  stopKitchenPolling: () => {
+  stopGlobalPolling: () => {
     if (kitchenPollTimer) {
       clearInterval(kitchenPollTimer)
       kitchenPollTimer = null
-      log('kitchen polling: stop')
+      log('global polling: stop')
     }
   },
+
+  // Alias para compatibilidad con Kitchen.jsx existente
+  startKitchenPolling: () => get().startGlobalPolling(),
+  stopKitchenPolling:  () => { /* el polling sigue global, no se detiene al salir de Cocina */ },
 
   // ============================================================
   //  Realtime — suscripción robusta con reconexión
@@ -413,7 +416,7 @@ export const useOrderStore = create((set, get) => ({
   },
 
   updateStatus: async (id, status) => {
-    const { error } = await withTimeout(
+    const { error } = await supabaseWithTimeout(
       supabase.from('orders').update({ status }).eq('id', id),
       FETCH_TIMEOUT_MS,
       'No se pudo actualizar el estado a tiempo'
@@ -422,7 +425,7 @@ export const useOrderStore = create((set, get) => ({
   },
 
   cancelOrder: async (id, reason) => {
-    const { error } = await withTimeout(
+    const { error } = await supabaseWithTimeout(
       supabase.from('orders').update({ status: 'cancelado', cancel_reason: reason || null }).eq('id', id),
       FETCH_TIMEOUT_MS,
       ''
@@ -431,7 +434,7 @@ export const useOrderStore = create((set, get) => ({
   },
 
   updateOrder: async (id, patch) => {
-    const { error } = await withTimeout(
+    const { error } = await supabaseWithTimeout(
       supabase.from('orders').update(patch).eq('id', id),
       FETCH_TIMEOUT_MS,
       ''
@@ -440,7 +443,7 @@ export const useOrderStore = create((set, get) => ({
   },
 
   softDeleteOrder: async (id, reason, userId) => {
-    const { error } = await withTimeout(
+    const { error } = await supabaseWithTimeout(
       supabase.from('orders').update({
         deleted_from_reports: true,
         deleted_at: new Date().toISOString(),
@@ -458,7 +461,7 @@ export const useOrderStore = create((set, get) => ({
   },
 
   restoreOrder: async (id) => {
-    const { error } = await withTimeout(
+    const { error } = await supabaseWithTimeout(
       supabase.from('orders').update({
         deleted_from_reports: false,
         deleted_at: null,

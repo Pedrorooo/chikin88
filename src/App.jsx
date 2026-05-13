@@ -24,6 +24,8 @@ export default function App() {
   const unsubscribe = useOrderStore(s => s.unsubscribe)
   const fetchActive = useOrderStore(s => s.fetchActive)
   const fetchToday = useOrderStore(s => s.fetchToday)
+  const startGlobalPolling = useOrderStore(s => s.startGlobalPolling)
+  const stopGlobalPolling = useOrderStore(s => s.stopGlobalPolling)
 
   useEffect(() => { init() }, [init])
 
@@ -38,6 +40,7 @@ export default function App() {
           fetchActive()
           fetchToday()
           subscribe()
+          startGlobalPolling()
         })
         .catch(() => {
           // Warmup falló — los stores ya marcaron health a 'auth_expired' o
@@ -46,16 +49,19 @@ export default function App() {
           fetchActive()
           fetchToday()
           subscribe()
+          startGlobalPolling()
         })
       startHeartbeat()
     } else {
       unsubscribe()
       stopHeartbeat()
+      stopGlobalPolling()
     }
     return () => {
       if (!session) {
         unsubscribe()
         stopHeartbeat()
+        stopGlobalPolling()
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

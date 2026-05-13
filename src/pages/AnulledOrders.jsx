@@ -1,13 +1,14 @@
-import { useState, useEffect, useMemo, memo } from 'react'
+import { useState, useEffect, useMemo, useCallback, memo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArchiveX, RotateCcw, Filter, Bike, ShoppingBag,
-  Banknote, ArrowRightLeft, AlertTriangle,
+  Banknote, ArrowRightLeft, AlertTriangle, RefreshCw, Loader2, RotateCw,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { supabase } from '../lib/supabase'
 import { useOrderStore } from '../store/orderStore'
 import { money, cx, fmtTime, fmtDate, STATUS_LABEL } from '../lib/utils'
+import { supabaseWithTimeout } from '../lib/appHealth'
 
 const RANGE_FILTERS = [
   { v: 'today', l: 'Hoy'        },
@@ -19,58 +20,84 @@ const RANGE_FILTERS = [
 export default function AnulledOrders() {
   const restoreOrder = useOrderStore(s => s.restoreOrder)
   const [orders, setOrders] = useState([])
-  const [profiles, setProfiles] = useState({})  // id → {full_name, email}
-  const [loading, setLoading] = useState(false)
+  const [profiles, setProfiles] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [ready, setReady] = useState(false)
+  const [error, setError] = useState(null)
   const [range, setRange] = useState('today')
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  // Carga pedidos anulados según el rango
-  const load = async () => {
+  const refresh = useCallback(() => setRefreshKey(k => k + 1), [])
+
+  // Carga pedidos anulados según el rango (con timeout duro)
+  useEffect(() => {
+    let cancelled = false
     setLoading(true)
-    try {
-      let query = supabase
-        .from('orders')
-        .select('*, order_items(product_name, quantity, subtotal)')
-        .eq('deleted_from_reports', true)
-        .order('deleted_at', { ascending: false })
-        .limit(1000)
+    setError(null)
 
-      if (range !== 'all') {
-        const now = new Date()
-        const start = new Date(now)
-        if (range === 'today')     start.setHours(0,0,0,0)
-        else if (range === 'week') {
-          const day = now.getDay() === 0 ? 7 : now.getDay()
-          start.setDate(now.getDate() - (day - 1))
-          start.setHours(0,0,0,0)
+    ;(async () => {
+      try {
+        let query = supabase
+          .from('orders')
+          .select('*, order_items(product_name, quantity, subtotal)')
+          .eq('deleted_from_reports', true)
+          .order('deleted_at', { ascending: false })
+          .limit(1000)
+
+        if (range !== 'all') {
+          const now = new Date()
+          const start = new Date(now)
+          if (range === 'today') {
+            start.setHours(0,0,0,0)
+          } else if (range === 'week') {
+            const day = now.getDay() === 0 ? 7 : now.getDay()
+            start.setDate(now.getDate() - (day - 1))
+            start.setHours(0,0,0,0)
+          } else if (range === 'month') {
+            start.setDate(1)
+            start.setHours(0,0,0,0)
+          }
+          query = query.gte('deleted_at', start.toISOString())
         }
-        else if (range === 'month') start.setDate(1), start.setHours(0,0,0,0)
-        query = query.gte('deleted_at', start.toISOString())
+
+        const { data, error: qErr } = await supabaseWithTimeout(
+          query, 12_000, 'Tiempo agotado cargando pedidos anulados'
+        )
+        if (cancelled) return
+        if (qErr) throw qErr
+        setOrders(data || [])
+
+        // Cargar nombres de los admins que anularon (no crítico, si falla se ignora)
+        const userIds = [...new Set((data || []).map(o => o.deleted_by).filter(Boolean))]
+        if (userIds.length > 0) {
+          try {
+            const { data: profs } = await supabaseWithTimeout(
+              supabase.from('profiles').select('id, full_name, email').in('id', userIds),
+              8_000,
+              ''
+            )
+            if (!cancelled) {
+              const map = {}
+              ;(profs || []).forEach(p => { map[p.id] = p })
+              setProfiles(map)
+            }
+          } catch {
+            // Falla en profiles no es crítica, ignoramos
+          }
+        }
+
+        setReady(true)
+      } catch (err) {
+        if (cancelled) return
+        console.error('[AnulledOrders] error:', err?.message || err)
+        setError(err?.message || 'No se pudieron cargar los pedidos anulados')
+      } finally {
+        if (!cancelled) setLoading(false)
       }
+    })()
 
-      const { data, error } = await query
-      if (error) throw error
-      setOrders(data || [])
-
-      // Cargar nombres de los admins que anularon
-      const userIds = [...new Set((data || []).map(o => o.deleted_by).filter(Boolean))]
-      if (userIds.length > 0) {
-        const { data: profs } = await supabase
-          .from('profiles')
-          .select('id, full_name, email')
-          .in('id', userIds)
-        const map = {}
-        ;(profs || []).forEach(p => { map[p.id] = p })
-        setProfiles(map)
-      }
-    } catch (err) {
-      console.error(err)
-      toast.error('Error al cargar pedidos anulados')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => { load() }, [range])
+    return () => { cancelled = true }
+  }, [range, refreshKey])
 
   const totalAnulled = useMemo(
     () => orders.reduce((s, o) => s + Number(o.total || 0), 0),
@@ -86,7 +113,7 @@ export default function AnulledOrders() {
     try {
       await restoreOrder(o.id)
       toast.success(`Pedido #${o.order_number} restaurado`)
-      load()  // recargar listado
+      refresh()  // recargar listado
     } catch (err) {
       console.error(err)
       toast.error('No se pudo restaurar el pedido')
@@ -104,10 +131,33 @@ export default function AnulledOrders() {
             <h1 className="font-display text-3xl md:text-4xl">Pedidos Anulados</h1>
             <p className="text-sm text-zinc-500">
               {orders.length} {orders.length === 1 ? 'pedido' : 'pedidos'} · {money(totalAnulled)} fuera de reportes
+              {loading && ready && (
+                <span className="ml-2 inline-flex items-center gap-1 text-chikin-red">
+                  <Loader2 size={12} className="animate-spin"/> Actualizando…
+                </span>
+              )}
             </p>
           </div>
         </div>
+        <button onClick={refresh} disabled={loading}
+          className="btn bg-zinc-100 dark:bg-chikin-gray-800 hover:bg-zinc-200 dark:hover:bg-chikin-gray-700 disabled:opacity-50">
+          <RefreshCw size={16} className={cx(loading && 'animate-spin')}/>
+          <span className="hidden sm:inline">Actualizar</span>
+        </button>
       </div>
+
+      {/* Banner si falló refetch con datos previos */}
+      {error && ready && (
+        <div className="card p-3 mb-4 bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-900 flex items-center gap-3">
+          <AlertTriangle className="text-rose-600 shrink-0" size={18}/>
+          <div className="flex-1 text-sm text-zinc-700 dark:text-zinc-200">
+            <b>Error al actualizar:</b> {error}. Mostrando datos anteriores.
+          </div>
+          <button onClick={refresh} className="btn bg-rose-600 text-white hover:bg-rose-700">
+            <RotateCw size={14}/> Reintentar
+          </button>
+        </div>
+      )}
 
       {/* Info box */}
       <div className="card p-3 mb-4 bg-yellow-50 dark:bg-yellow-950/30 border-yellow-300 dark:border-yellow-900">
@@ -138,9 +188,20 @@ export default function AnulledOrders() {
         ))}
       </div>
 
-      {loading ? (
+      {!ready && loading ? (
         <div className="text-center py-20 text-zinc-400">
-          <div className="font-display text-2xl text-chikin-yellow animate-pulse">Cargando...</div>
+          <Loader2 className="mx-auto mb-3 text-chikin-red animate-spin" size={36}/>
+          <div className="font-bold">Cargando pedidos anulados…</div>
+        </div>
+      ) : !ready && error ? (
+        <div className="card p-8 text-center bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-900">
+          <AlertTriangle className="mx-auto mb-3 text-rose-600" size={48}/>
+          <h2 className="font-bold text-xl mb-2">No se pudieron cargar los pedidos</h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-5">{error}</p>
+          <button onClick={refresh}
+            className="btn-lg bg-chikin-red text-white hover:bg-chikin-red-dark">
+            <RotateCw size={18}/> Reintentar
+          </button>
         </div>
       ) : orders.length === 0 ? (
         <div className="text-center py-16">

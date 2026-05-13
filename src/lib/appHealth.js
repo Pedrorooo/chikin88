@@ -67,6 +67,49 @@ export function withTimeout(promise, ms, errorMessage) {
 }
 
 // ============================================================
+//  supabaseWithTimeout — el helper que usa el resto de la app
+// ============================================================
+//
+//  Envuelve cualquier query/RPC de supabase-js con AbortController
+//  REAL (cancela el fetch nativo) + timeout duro. Más robusto que
+//  withTimeout solo, porque también cancela la petición HTTP.
+//
+//  Uso:
+//    const { data, error } = await supabaseWithTimeout(
+//      supabase.from('orders').select('*').eq(...),
+//      10_000,
+//      'Tiempo agotado cargando pedidos'
+//    )
+//
+//  IMPORTANTE: pasar el query BUILDER, no `await`. Esto permite
+//  encadenar .abortSignal() antes de ejecutarse.
+// ============================================================
+export function supabaseWithTimeout(queryBuilder, ms = 10_000, errorMessage) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), ms)
+
+  // Si el builder soporta abortSignal (cualquier query/rpc), lo aplicamos.
+  // Si no lo soporta (raro), igual cae el timeout por Promise.race.
+  const promise = typeof queryBuilder.abortSignal === 'function'
+    ? queryBuilder.abortSignal(ctrl.signal)
+    : queryBuilder
+
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      // Si el timer dispara, abortamos Y rechazamos
+      // (Promise.race ya estará "ganada" por el reject)
+    }),
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        ctrl.abort()
+        reject(new Error(errorMessage || `Tiempo de espera (${ms}ms)`))
+      }, ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
+// ============================================================
 //  Lectura DIRECTA de localStorage — sin tocar el lock de auth
 // ============================================================
 function readStoredSession() {

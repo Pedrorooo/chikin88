@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import toast from 'react-hot-toast'
 import { supabase } from '../lib/supabase'
+import { supabaseWithTimeout } from '../lib/appHealth'
 import { useAuthStore } from '../store/authStore'
 import { useOrderStore } from '../store/orderStore'
 import {
@@ -110,17 +111,27 @@ export default function Reports() {
     const { start, end } = currentRange
     ;(async () => {
       try {
+        // Timeout duro: si Supabase está stale, AbortController mata
+        // las queries y mostramos error con botón Reintentar.
         const [oRes, eRes] = await Promise.all([
-          supabase.from('orders')
-            .select('*, order_items(*)')
-            .gte('created_at', start).lte('created_at', end)
-            .eq('deleted_from_reports', false)
-            .order('created_at', { ascending: false })
-            .limit(5000),
-          supabase.from('expenses').select('*')
-            .gte('expense_date', start.slice(0, 10)).lte('expense_date', end.slice(0, 10))
-            .order('expense_date', { ascending: false })
-            .limit(2000),
+          supabaseWithTimeout(
+            supabase.from('orders')
+              .select('*, order_items(*)')
+              .gte('created_at', start).lte('created_at', end)
+              .eq('deleted_from_reports', false)
+              .order('created_at', { ascending: false })
+              .limit(5000),
+            12_000,
+            'Tiempo agotado cargando pedidos del reporte'
+          ),
+          supabaseWithTimeout(
+            supabase.from('expenses').select('*')
+              .gte('expense_date', start.slice(0, 10)).lte('expense_date', end.slice(0, 10))
+              .order('expense_date', { ascending: false })
+              .limit(2000),
+            12_000,
+            'Tiempo agotado cargando gastos del reporte'
+          ),
         ])
         if (cancelled) return
         if (oRes.error) throw oRes.error
@@ -152,20 +163,30 @@ export default function Reports() {
       const cur  = yearRange(year)
       try {
         const [prevRes, expRes] = await Promise.all([
-          supabase.from('orders')
-            .select('id, order_number, total, created_at, status, deleted_from_reports, benefit_type')
-            .gte('created_at', prev.start).lte('created_at', prev.end)
-            .eq('deleted_from_reports', false)
-            .limit(5000),
-          supabase.from('expenses').select('*')
-            .gte('expense_date', cur.start.slice(0,10)).lte('expense_date', cur.end.slice(0,10))
-            .limit(2000),
+          supabaseWithTimeout(
+            supabase.from('orders')
+              .select('id, order_number, total, created_at, status, deleted_from_reports, benefit_type')
+              .gte('created_at', prev.start).lte('created_at', prev.end)
+              .eq('deleted_from_reports', false)
+              .limit(5000),
+            12_000,
+            ''
+          ),
+          supabaseWithTimeout(
+            supabase.from('expenses').select('*')
+              .gte('expense_date', cur.start.slice(0,10)).lte('expense_date', cur.end.slice(0,10))
+              .limit(2000),
+            12_000,
+            ''
+          ),
         ])
         if (cancelled) return
         setPrevYearOrders(prevRes.data || [])
         setYearExpenses(expRes.data || [])
       } catch (err) {
-        console.error('annual fetch error:', err)
+        // Datos de comparativa anual no son críticos; si fallan, simplemente
+        // no mostramos la comparativa. El reporte principal sigue funcionando.
+        console.warn('annual fetch error:', err?.message)
       }
     })()
     return () => { cancelled = true }

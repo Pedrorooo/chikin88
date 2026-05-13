@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
   TrendingUp, ShoppingBag, Receipt, DollarSign,
   Trophy, Banknote, ArrowRightLeft, XCircle,
+  RefreshCw, AlertTriangle, Loader2, RotateCw,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { supabase } from '../lib/supabase'
 import { money, todayRange, weekRange, monthRange, cx } from '../lib/utils'
+import { supabaseWithTimeout } from '../lib/appHealth'
 
 const RANGES = [
   { v: 'today', l: 'Hoy',     fn: todayRange },
@@ -13,85 +15,191 @@ const RANGES = [
   { v: 'month', l: 'Mes',     fn: monthRange },
 ]
 
+const EMPTY_STATS = {
+  revenue: 0, expenses: 0, orders: 0, cancelled: 0,
+  cash: 0, transfer: 0, products: [],
+}
+
 export default function Dashboard() {
   const [range, setRange] = useState('today')
-  const [stats, setStats] = useState({
-    revenue: 0, expenses: 0, orders: 0, cancelled: 0,
-    cash: 0, transfer: 0, products: [],
-  })
-  const [loading, setLoading] = useState(false)
+  const [stats, setStats] = useState(EMPTY_STATS)
+  const [loading, setLoading] = useState(true)
+  const [ready, setReady] = useState(false)
+  const [error, setError] = useState(null)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  const refresh = useCallback(() => setRefreshKey(k => k + 1), [])
 
   useEffect(() => {
-    (async () => {
-      setLoading(true)
-      const { start, end } = (RANGES.find(r => r.v === range).fn)()
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    const { start, end } = (RANGES.find(r => r.v === range).fn)()
 
-      const [oRes, eRes] = await Promise.all([
-        supabase.from('orders')
-          .select('id, total, payment_method, status, created_at, deleted_from_reports, benefit_type, order_items(product_name, quantity, subtotal)')
-          .gte('created_at', start).lte('created_at', end)
-          .eq('deleted_from_reports', false)
-          .limit(5000),
-        supabase.from('expenses')
-          .select('amount').gte('expense_date', start.slice(0,10)).lte('expense_date', end.slice(0,10))
-          .limit(2000),
-      ])
+    ;(async () => {
+      try {
+        // Timeout duro de 12s en cada query. Si Supabase está stale,
+        // el AbortController mata la petición y mostramos error.
+        const [oRes, eRes] = await Promise.all([
+          supabaseWithTimeout(
+            supabase.from('orders')
+              .select('id, total, payment_method, status, created_at, deleted_from_reports, benefit_type, order_items(product_name, quantity, subtotal)')
+              .gte('created_at', start).lte('created_at', end)
+              .eq('deleted_from_reports', false)
+              .limit(5000),
+            12_000,
+            'Tiempo agotado cargando pedidos'
+          ),
+          supabaseWithTimeout(
+            supabase.from('expenses')
+              .select('amount').gte('expense_date', start.slice(0,10)).lte('expense_date', end.slice(0,10))
+              .limit(2000),
+            12_000,
+            'Tiempo agotado cargando gastos'
+          ),
+        ])
 
-      const orders = oRes.data || []
-      const valid = orders.filter(o => o.status !== 'cancelado')
-      const rev   = valid.filter(o => o.benefit_type !== 'courtesy')
-      const expenses = eRes.data || []
+        if (cancelled) return
+        if (oRes.error) throw oRes.error
+        if (eRes.error) throw eRes.error
 
-      const revenue   = rev.reduce((s, o) => s + Number(o.total || 0), 0)
-      const cash      = rev.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
-      const transfer  = rev.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
-      const expSum    = expenses.reduce((s, e) => s + Number(e.amount || 0), 0)
+        const orders = oRes.data || []
+        const valid = orders.filter(o => o.status !== 'cancelado')
+        const rev   = valid.filter(o => o.benefit_type !== 'courtesy')
+        const expenses = eRes.data || []
 
-      // Top productos
-      const map = new Map()
-      valid.forEach(o => (o.order_items || []).forEach(it => {
-        const cur = map.get(it.product_name) || { qty: 0, rev: 0 }
-        map.set(it.product_name, {
-          qty: cur.qty + Number(it.quantity || 0),
-          rev: cur.rev + Number(it.subtotal || 0),
+        const revenue   = rev.reduce((s, o) => s + Number(o.total || 0), 0)
+        const cash      = rev.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
+        const transfer  = rev.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
+        const expSum    = expenses.reduce((s, e) => s + Number(e.amount || 0), 0)
+
+        // Top productos
+        const map = new Map()
+        valid.forEach(o => (o.order_items || []).forEach(it => {
+          const cur = map.get(it.product_name) || { qty: 0, rev: 0 }
+          map.set(it.product_name, {
+            qty: cur.qty + Number(it.quantity || 0),
+            rev: cur.rev + Number(it.subtotal || 0),
+          })
+        }))
+        const products = [...map.entries()]
+          .map(([name, v]) => ({ name, ...v }))
+          .sort((a, b) => b.qty - a.qty)
+          .slice(0, 8)
+
+        setStats({
+          revenue, expenses: expSum, orders: valid.length,
+          cancelled: orders.length - valid.length,
+          cash, transfer, products,
         })
-      }))
-      const products = [...map.entries()]
-        .map(([name, v]) => ({ name, ...v }))
-        .sort((a, b) => b.qty - a.qty)
-        .slice(0, 8)
-
-      setStats({
-        revenue, expenses: expSum, orders: valid.length,
-        cancelled: orders.length - valid.length,
-        cash, transfer, products,
-      })
-      setLoading(false)
+        setReady(true)
+      } catch (err) {
+        if (cancelled) return
+        console.error('[Dashboard] error:', err?.message || err)
+        setError(err?.message || 'No se pudieron cargar los datos')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     })()
-  }, [range])
+
+    return () => { cancelled = true }
+  }, [range, refreshKey])
 
   const profit = stats.revenue - stats.expenses
 
+  // Loading inicial sin datos previos: pantalla completa con skeleton
+  if (!ready && loading && !error) {
+    return (
+      <div className="p-4 md:p-6 max-w-7xl mx-auto">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-1.5 h-10 bg-chikin-red rounded-full"/>
+          <div>
+            <h1 className="font-display text-3xl md:text-4xl">Dashboard</h1>
+            <p className="text-sm text-chikin-red flex items-center gap-1.5">
+              <Loader2 size={14} className="animate-spin"/> Cargando dashboard…
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="card p-4 animate-pulse">
+              <div className="h-2 w-12 bg-zinc-200 dark:bg-chikin-gray-700 rounded mb-3"/>
+              <div className="h-6 w-20 bg-zinc-200 dark:bg-chikin-gray-700 rounded"/>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // Error sin datos previos: pantalla completa con botón Reintentar
+  if (!ready && error) {
+    return (
+      <div className="p-4 md:p-6 max-w-7xl mx-auto">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-1.5 h-10 bg-chikin-red rounded-full"/>
+          <h1 className="font-display text-3xl md:text-4xl">Dashboard</h1>
+        </div>
+        <div className="card p-8 text-center bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-900">
+          <AlertTriangle className="mx-auto mb-3 text-rose-600" size={48}/>
+          <h2 className="font-bold text-xl mb-2">No se pudieron cargar los datos</h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-5">{error}</p>
+          <button onClick={refresh}
+            className="btn-lg bg-chikin-red text-white hover:bg-chikin-red-dark">
+            <RotateCw size={18}/> Reintentar
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="w-1.5 h-10 bg-chikin-red rounded-full"/>
           <div>
             <h1 className="font-display text-3xl md:text-4xl">Dashboard</h1>
-            <p className="text-sm text-zinc-500">Resumen ejecutivo</p>
+            <p className="text-sm text-zinc-500">
+              Resumen ejecutivo
+              {loading && ready && (
+                <span className="ml-2 inline-flex items-center gap-1 text-chikin-red">
+                  <Loader2 size={12} className="animate-spin"/> Actualizando…
+                </span>
+              )}
+            </p>
           </div>
         </div>
-        <div className="flex gap-1 bg-white dark:bg-chikin-gray-800 rounded-xl p-1">
-          {RANGES.map(r => (
-            <button key={r.v} onClick={() => setRange(r.v)}
-              className={cx(
-                'px-4 py-2 rounded-lg text-sm font-bold transition',
-                range === r.v ? 'bg-chikin-red text-white' : 'text-zinc-500'
-              )}>{r.l}</button>
-          ))}
+        <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-1 bg-white dark:bg-chikin-gray-800 rounded-xl p-1">
+            {RANGES.map(r => (
+              <button key={r.v} onClick={() => setRange(r.v)}
+                className={cx(
+                  'px-4 py-2 rounded-lg text-sm font-bold transition',
+                  range === r.v ? 'bg-chikin-red text-white' : 'text-zinc-500'
+                )}>{r.l}</button>
+            ))}
+          </div>
+          <button onClick={refresh} disabled={loading}
+            className="btn bg-zinc-100 dark:bg-chikin-gray-800 hover:bg-zinc-200 dark:hover:bg-chikin-gray-700 disabled:opacity-50">
+            <RefreshCw size={16} className={cx(loading && 'animate-spin')}/>
+            <span className="hidden sm:inline">Actualizar</span>
+          </button>
         </div>
       </div>
+
+      {/* Banner si falló refetch pero hay datos viejos */}
+      {error && ready && (
+        <div className="card p-3 mb-4 bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-900 flex items-center gap-3">
+          <AlertTriangle className="text-rose-600 shrink-0" size={18}/>
+          <div className="flex-1 text-sm text-zinc-700 dark:text-zinc-200">
+            <b>Error al actualizar:</b> {error}. Mostrando datos anteriores.
+          </div>
+          <button onClick={refresh} className="btn bg-rose-600 text-white hover:bg-rose-700">
+            <RotateCw size={14}/> Reintentar
+          </button>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
