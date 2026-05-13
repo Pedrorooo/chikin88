@@ -5,14 +5,13 @@ import {
   RefreshCw, AlertTriangle, Loader2, RotateCw,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { supabase } from '../lib/supabase'
-import { money, todayRange, weekRange, monthRange, cx } from '../lib/utils'
-import { supabaseWithTimeout } from '../lib/appHealth'
+import { money, cx } from '../lib/utils'
+import { apiFetch } from '../lib/apiFetch'
 
 const RANGES = [
-  { v: 'today', l: 'Hoy',     fn: todayRange },
-  { v: 'week',  l: 'Semana',  fn: weekRange  },
-  { v: 'month', l: 'Mes',     fn: monthRange },
+  { v: 'today', l: 'Hoy'    },
+  { v: 'week',  l: 'Semana' },
+  { v: 'month', l: 'Mes'    },
 ]
 
 const EMPTY_STATS = {
@@ -34,72 +33,23 @@ export default function Dashboard() {
     let cancelled = false
     setLoading(true)
     setError(null)
-    const { start, end } = (RANGES.find(r => r.v === range).fn)()
 
     ;(async () => {
-      try {
-        // Timeout duro de 12s en cada query. Si Supabase está stale,
-        // el AbortController mata la petición y mostramos error.
-        const [oRes, eRes] = await Promise.all([
-          supabaseWithTimeout(
-            supabase.from('orders')
-              .select('id, total, payment_method, status, created_at, deleted_from_reports, benefit_type, order_items(product_name, quantity, subtotal)')
-              .gte('created_at', start).lte('created_at', end)
-              .eq('deleted_from_reports', false)
-              .limit(5000),
-            12_000,
-            'Tiempo agotado cargando pedidos'
-          ),
-          supabaseWithTimeout(
-            supabase.from('expenses')
-              .select('amount').gte('expense_date', start.slice(0,10)).lte('expense_date', end.slice(0,10))
-              .limit(2000),
-            12_000,
-            'Tiempo agotado cargando gastos'
-          ),
-        ])
-
-        if (cancelled) return
-        if (oRes.error) throw oRes.error
-        if (eRes.error) throw eRes.error
-
-        const orders = oRes.data || []
-        const valid = orders.filter(o => o.status !== 'cancelado')
-        const rev   = valid.filter(o => o.benefit_type !== 'courtesy')
-        const expenses = eRes.data || []
-
-        const revenue   = rev.reduce((s, o) => s + Number(o.total || 0), 0)
-        const cash      = rev.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
-        const transfer  = rev.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
-        const expSum    = expenses.reduce((s, e) => s + Number(e.amount || 0), 0)
-
-        // Top productos
-        const map = new Map()
-        valid.forEach(o => (o.order_items || []).forEach(it => {
-          const cur = map.get(it.product_name) || { qty: 0, rev: 0 }
-          map.set(it.product_name, {
-            qty: cur.qty + Number(it.quantity || 0),
-            rev: cur.rev + Number(it.subtotal || 0),
-          })
-        }))
-        const products = [...map.entries()]
-          .map(([name, v]) => ({ name, ...v }))
-          .sort((a, b) => b.qty - a.qty)
-          .slice(0, 8)
-
-        setStats({
-          revenue, expenses: expSum, orders: valid.length,
-          cancelled: orders.length - valid.length,
-          cash, transfer, products,
-        })
-        setReady(true)
-      } catch (err) {
-        if (cancelled) return
-        console.error('[Dashboard] error:', err?.message || err)
-        setError(err?.message || 'No se pudieron cargar los datos')
-      } finally {
-        if (!cancelled) setLoading(false)
+      const { data, error: apiErr } = await apiFetch(
+        `/api/dashboard?range=${range}`,
+        {},
+        12_000
+      )
+      if (cancelled) return
+      if (apiErr) {
+        console.error('[Dashboard] error:', apiErr)
+        setError(apiErr)
+        setLoading(false)
+        return
       }
+      setStats(data?.stats || EMPTY_STATS)
+      setReady(true)
+      setLoading(false)
     })()
 
     return () => { cancelled = true }

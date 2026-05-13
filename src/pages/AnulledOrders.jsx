@@ -5,10 +5,9 @@ import {
   Banknote, ArrowRightLeft, AlertTriangle, RefreshCw, Loader2, RotateCw,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { supabase } from '../lib/supabase'
 import { useOrderStore } from '../store/orderStore'
 import { money, cx, fmtTime, fmtDate, STATUS_LABEL } from '../lib/utils'
-import { supabaseWithTimeout } from '../lib/appHealth'
+import { apiFetch } from '../lib/apiFetch'
 
 const RANGE_FILTERS = [
   { v: 'today', l: 'Hoy'        },
@@ -29,71 +28,28 @@ export default function AnulledOrders() {
 
   const refresh = useCallback(() => setRefreshKey(k => k + 1), [])
 
-  // Carga pedidos anulados según el rango (con timeout duro)
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
 
     ;(async () => {
-      try {
-        let query = supabase
-          .from('orders')
-          .select('*, order_items(product_name, quantity, subtotal)')
-          .eq('deleted_from_reports', true)
-          .order('deleted_at', { ascending: false })
-          .limit(1000)
-
-        if (range !== 'all') {
-          const now = new Date()
-          const start = new Date(now)
-          if (range === 'today') {
-            start.setHours(0,0,0,0)
-          } else if (range === 'week') {
-            const day = now.getDay() === 0 ? 7 : now.getDay()
-            start.setDate(now.getDate() - (day - 1))
-            start.setHours(0,0,0,0)
-          } else if (range === 'month') {
-            start.setDate(1)
-            start.setHours(0,0,0,0)
-          }
-          query = query.gte('deleted_at', start.toISOString())
-        }
-
-        const { data, error: qErr } = await supabaseWithTimeout(
-          query, 12_000, 'Tiempo agotado cargando pedidos anulados'
-        )
-        if (cancelled) return
-        if (qErr) throw qErr
-        setOrders(data || [])
-
-        // Cargar nombres de los admins que anularon (no crítico, si falla se ignora)
-        const userIds = [...new Set((data || []).map(o => o.deleted_by).filter(Boolean))]
-        if (userIds.length > 0) {
-          try {
-            const { data: profs } = await supabaseWithTimeout(
-              supabase.from('profiles').select('id, full_name, email').in('id', userIds),
-              8_000,
-              ''
-            )
-            if (!cancelled) {
-              const map = {}
-              ;(profs || []).forEach(p => { map[p.id] = p })
-              setProfiles(map)
-            }
-          } catch {
-            // Falla en profiles no es crítica, ignoramos
-          }
-        }
-
-        setReady(true)
-      } catch (err) {
-        if (cancelled) return
-        console.error('[AnulledOrders] error:', err?.message || err)
-        setError(err?.message || 'No se pudieron cargar los pedidos anulados')
-      } finally {
-        if (!cancelled) setLoading(false)
+      const { data, error: apiErr } = await apiFetch(
+        `/api/anulados?range=${range}`,
+        {},
+        12_000
+      )
+      if (cancelled) return
+      if (apiErr) {
+        console.error('[AnulledOrders] error:', apiErr)
+        setError(apiErr)
+        setLoading(false)
+        return
       }
+      setOrders(data?.orders || [])
+      setProfiles(data?.profiles || {})
+      setReady(true)
+      setLoading(false)
     })()
 
     return () => { cancelled = true }

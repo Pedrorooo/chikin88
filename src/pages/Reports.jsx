@@ -11,8 +11,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, AreaChart, Area, Cell,
 } from 'recharts'
 import toast from 'react-hot-toast'
-import { supabase } from '../lib/supabase'
-import { supabaseWithTimeout } from '../lib/appHealth'
+import { apiFetch } from '../lib/apiFetch'
 import { useAuthStore } from '../store/authStore'
 import { useOrderStore } from '../store/orderStore'
 import {
@@ -110,42 +109,25 @@ export default function Reports() {
     setError(null)
     const { start, end } = currentRange
     ;(async () => {
-      try {
-        // Timeout duro: si Supabase está stale, AbortController mata
-        // las queries y mostramos error con botón Reintentar.
-        const [oRes, eRes] = await Promise.all([
-          supabaseWithTimeout(
-            supabase.from('orders')
-              .select('*, order_items(*)')
-              .gte('created_at', start).lte('created_at', end)
-              .eq('deleted_from_reports', false)
-              .order('created_at', { ascending: false })
-              .limit(5000),
-            12_000,
-            'Tiempo agotado cargando pedidos del reporte'
-          ),
-          supabaseWithTimeout(
-            supabase.from('expenses').select('*')
-              .gte('expense_date', start.slice(0, 10)).lte('expense_date', end.slice(0, 10))
-              .order('expense_date', { ascending: false })
-              .limit(2000),
-            12_000,
-            'Tiempo agotado cargando gastos del reporte'
-          ),
-        ])
-        if (cancelled) return
-        if (oRes.error) throw oRes.error
-        if (eRes.error) throw eRes.error
-        setOrders(oRes.data || [])
-        setExpenses(eRes.data || [])
-        setReady(true)
-      } catch (err) {
-        if (cancelled) return
-        console.error('Reports fetch error:', err)
-        setError(err.message || 'Error al cargar reportes')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+      const [oRes, eRes] = await Promise.all([
+        apiFetch(
+          `/api/orders-range?from=${encodeURIComponent(start)}&to=${encodeURIComponent(end)}`,
+          {},
+          15_000
+        ),
+        apiFetch(
+          `/api/expenses?from=${start.slice(0,10)}&to=${end.slice(0,10)}`,
+          {},
+          12_000
+        ),
+      ])
+      if (cancelled) return
+      if (oRes.error) { setError(oRes.error); setLoading(false); return }
+      if (eRes.error) { setError(eRes.error); setLoading(false); return }
+      setOrders(oRes.data?.orders || [])
+      setExpenses(eRes.data?.expenses || [])
+      setReady(true)
+      setLoading(false)
     })()
     return () => { cancelled = true }
   }, [currentRange])
@@ -161,33 +143,23 @@ export default function Reports() {
     ;(async () => {
       const prev = yearRange(year - 1)
       const cur  = yearRange(year)
-      try {
-        const [prevRes, expRes] = await Promise.all([
-          supabaseWithTimeout(
-            supabase.from('orders')
-              .select('id, order_number, total, created_at, status, deleted_from_reports, benefit_type')
-              .gte('created_at', prev.start).lte('created_at', prev.end)
-              .eq('deleted_from_reports', false)
-              .limit(5000),
-            12_000,
-            ''
-          ),
-          supabaseWithTimeout(
-            supabase.from('expenses').select('*')
-              .gte('expense_date', cur.start.slice(0,10)).lte('expense_date', cur.end.slice(0,10))
-              .limit(2000),
-            12_000,
-            ''
-          ),
-        ])
-        if (cancelled) return
-        setPrevYearOrders(prevRes.data || [])
-        setYearExpenses(expRes.data || [])
-      } catch (err) {
-        // Datos de comparativa anual no son críticos; si fallan, simplemente
-        // no mostramos la comparativa. El reporte principal sigue funcionando.
-        console.warn('annual fetch error:', err?.message)
-      }
+      const [prevRes, expRes] = await Promise.all([
+        apiFetch(
+          `/api/orders-range?from=${encodeURIComponent(prev.start)}&to=${encodeURIComponent(prev.end)}&light=1`,
+          {},
+          15_000
+        ),
+        apiFetch(
+          `/api/expenses?from=${cur.start.slice(0,10)}&to=${cur.end.slice(0,10)}`,
+          {},
+          12_000
+        ),
+      ])
+      if (cancelled) return
+      // Datos de comparativa anual no son críticos; si fallan, simplemente
+      // no mostramos la comparativa. El reporte principal sigue funcionando.
+      if (!prevRes.error) setPrevYearOrders(prevRes.data?.orders || [])
+      if (!expRes.error)  setYearExpenses(expRes.data?.expenses || [])
     })()
     return () => { cancelled = true }
   }, [mode, year, refreshKey])

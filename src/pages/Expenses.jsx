@@ -1,53 +1,64 @@
-import { useEffect, useState } from 'react'
-import { Plus, Trash2, Receipt, Calendar } from 'lucide-react'
+import { useEffect, useState, useCallback } from 'react'
+import { Plus, Trash2, Receipt, Calendar, AlertTriangle, RotateCw } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
-import { supabase } from '../lib/supabase'
-import { useAuthStore } from '../store/authStore'
-import { money, fmtDate, todayRange, weekRange, monthRange, cx } from '../lib/utils'
+import { money, fmtDate, todayRange, weekRange, monthRange } from '../lib/utils'
+import { apiFetch } from '../lib/apiFetch'
 
 export default function Expenses() {
-  const { profile } = useAuthStore()
   const [expenses, setExpenses] = useState([])
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(() => new Date().toISOString().slice(0,10))
   const [loading, setLoading] = useState(false)
+  const [listError, setListError] = useState(null)
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  const load = async () => {
-    const { data } = await supabase
-      .from('expenses').select('*')
-      .order('expense_date', { ascending: false })
-      .order('created_at', { ascending: false })
-      .limit(100)
-    setExpenses(data || [])
-  }
-  useEffect(() => { load() }, [])
+  const refresh = useCallback(() => setRefreshKey(k => k + 1), [])
+
+  // Cargar gastos
+  useEffect(() => {
+    let cancelled = false
+    setListError(null)
+    ;(async () => {
+      const { data, error } = await apiFetch('/api/expenses', {}, 12_000)
+      if (cancelled) return
+      if (error) { setListError(error); return }
+      setExpenses(data?.expenses || [])
+    })()
+    return () => { cancelled = true }
+  }, [refreshKey])
 
   const submit = async (e) => {
     e.preventDefault()
     if (!description.trim() || !amount) return toast.error('Completa los campos')
     setLoading(true)
     try {
-      const { error } = await supabase.from('expenses').insert([{
-        description: description.trim(),
-        amount: Number(amount),
-        expense_date: date,
-        created_by: profile?.id || null,
-      }])
-      if (error) throw error
+      const { error } = await apiFetch('/api/expenses', {
+        method: 'POST',
+        body: {
+          description: description.trim(),
+          amount: Number(amount),
+          expense_date: date,
+          category: 'general',
+        },
+      }, 10_000)
+      if (error) throw new Error(error)
       toast.success('Gasto registrado')
       setDescription(''); setAmount('')
-      load()
-    } catch (e) { toast.error('No se pudo guardar') }
-    finally { setLoading(false) }
+      refresh()
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo guardar')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const remove = async (id) => {
     if (!window.confirm('¿Eliminar este gasto?')) return
-    const { error } = await supabase.from('expenses').delete().eq('id', id)
-    if (error) toast.error('No se pudo eliminar')
-    else { toast.success('Eliminado'); load() }
+    const { error } = await apiFetch(`/api/expenses?id=${id}`, { method: 'DELETE' }, 10_000)
+    if (error) toast.error(error)
+    else { toast.success('Eliminado'); refresh() }
   }
 
   // Totales por rango
@@ -77,6 +88,18 @@ export default function Expenses() {
         <TotalCard label="Semana"  value={totals.week}/>
         <TotalCard label="Mes"     value={totals.month}/>
       </div>
+
+      {listError && (
+        <div className="card p-3 mb-4 bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-900 flex items-center gap-3">
+          <AlertTriangle className="text-rose-600 shrink-0" size={18}/>
+          <div className="flex-1 text-sm text-zinc-700 dark:text-zinc-200">
+            <b>Error:</b> {listError}
+          </div>
+          <button onClick={refresh} className="btn bg-rose-600 text-white hover:bg-rose-700">
+            <RotateCw size={14}/> Reintentar
+          </button>
+        </div>
+      )}
 
       <div className="grid md:grid-cols-[1fr_2fr] gap-6">
         {/* Formulario */}

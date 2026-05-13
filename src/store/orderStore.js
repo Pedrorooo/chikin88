@@ -1,323 +1,98 @@
 import { create } from 'zustand'
 import { supabase } from '../lib/supabase'
-import toast from 'react-hot-toast'
-import { supabaseWithTimeout, markSuccess } from '../lib/appHealth'
+import { apiFetch } from '../lib/apiFetch'
 import { useHealthStore } from './healthStore'
+import { markSuccess } from '../lib/appHealth'
 
 // ============================================================
-//  Logs sólo en desarrollo
+//  orderStore — fuente de verdad para pedidos
+//
+//  ARQUITECTURA NUEVA:
+//    • TODAS las lecturas/escrituras pasan por /api/* (Vercel).
+//    • supabase del navegador queda SOLO para:
+//        - escuchar realtime como "señal" (notifica que algo cambió,
+//          y entonces nosotros refrescamos vía API)
+//        - login/auth
+//    • Si el cliente del navegador queda stale, no importa: el API
+//      tiene conexión fresca en cada llamada.
+//
+//  POLLING GLOBAL:
+//    • Cada 5s si Cocina/Pedidos visibles
+//    • Cada 30s si tab visible pero no en esas pantallas
+//    • No corre con tab oculta
 // ============================================================
+
 const isDev = import.meta.env?.DEV === true
 const log = (...args) => { if (isDev) console.log('[orderStore]', ...args) }
 const warn = (...args) => { if (isDev) console.warn('[orderStore]', ...args) }
 
-// ============================================================
-//  Constantes
-// ============================================================
-const CREATE_ORDER_TIMEOUT_MS = 10_000        // Timeout duro para crear pedido
-const FETCH_TIMEOUT_MS        = 15_000        // Timeout duro para fetch
-const RECONNECT_BASE_MS       = 1_000         // Backoff exponencial: 1s → 2s → 4s …
-const RECONNECT_MAX_MS        = 30_000
-const TODAY_REFRESH_THROTTLE  = 2_000         // Refetch de "hoy" como mucho cada 2s
-const CHANNEL_NAME            = 'chikin88-orders-realtime'
+const CHANNEL_NAME = 'chikin88-orders-realtime'
+const RECONNECT_BASE_MS = 1_000
+const RECONNECT_MAX_MS  = 30_000
 
-// Estado del canal de realtime (no reactivo, sólo info auxiliar a nivel módulo)
+const FETCH_TIMEOUT_MS = 12_000
+
+// Estado a nivel módulo (no reactivo)
 let channel = null
 let reconnectAttempt = 0
 let reconnectTimer = null
+let pollTimer = null
+let lastPollAt = 0
 let lastTodayRefresh = 0
-// Polling de respaldo para cocina
-let kitchenPollTimer = null
-let kitchenLastPoll = 0
+const TODAY_THROTTLE_MS = 2_000
 
-// ============================================================
-//  Helper: leer access_token SÍNCRONO de localStorage.
-//
-//  NO toca el SDK de Supabase. NO se puede colgar. NO necesita await.
-//
-//  Esto es lo único que necesitamos para autenticar el POST al
-//  endpoint serverless. El servidor valida el JWT contra Supabase
-//  Auth directamente, así que aunque el token esté un poco vencido,
-//  el servidor te dice claramente y el frontend muestra el error.
-//  No es nuestro problema "refrescar" antes — el endpoint lo
-//  detecta y responde 401.
-// ============================================================
-function readAccessTokenSync() {
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i)
-      if (k && k.startsWith('sb-') && k.endsWith('-auth-token')) {
-        const raw = localStorage.getItem(k)
-        if (!raw) continue
-        const parsed = JSON.parse(raw)
-        // Estructura nueva: { access_token, refresh_token, expires_at, ... }
-        // Estructura antigua: { currentSession: { access_token, ... } }
-        return parsed?.access_token || parsed?.currentSession?.access_token || null
-      }
-    }
-  } catch (e) {
-    // Si JSON.parse falla o no hay localStorage, no hay token
-  }
-  return null
-}
-
-// ============================================================
-//  STORE
-// ============================================================
 export const useOrderStore = create((set, get) => ({
-  orders: [],          // pedidos activos para Cocina/Pedidos
-  todayOrders: [],     // pedidos del día (excluye anulados)
+  orders: [],          // pedidos activos
+  todayOrders: [],     // pedidos del día
   loading: false,
   ready: false,
-  // 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
   realtimeStatus: 'idle',
-  lastSyncAt: null,    // timestamp del último fetch/refetch exitoso
+  lastSyncAt: null,
 
   // ============================================================
-  //  Carga inicial / refetch manual
+  //  Lecturas — todas vía API serverless
   // ============================================================
   fetchActive: async () => {
     set({ loading: true })
-    try {
-      const { data, error } = await supabaseWithTimeout(
-        supabase
-          .from('orders')
-          .select('*, order_items(*)')
-          .in('status', ['pendiente', 'en_preparacion', 'listo'])
-          .eq('deleted_from_reports', false)
-          .order('created_at', { ascending: true })
-          .limit(200),
-        FETCH_TIMEOUT_MS,
-        'Tiempo de espera al cargar pedidos'
-      )
-      if (error) throw error
-      set({ orders: data || [], lastSyncAt: Date.now() })
-      log('fetchActive OK', data?.length)
-    } catch (err) {
-      console.error('fetchActive error:', err?.message || err)
-      // No mostramos toast: si Supabase está stale, no hay nada que el
-      // usuario pueda hacer y el ruido es molesto. El indicador de salud
-      // y el botón "Actualizar" en Cocina son los canales correctos.
-    } finally {
+    const { data, error } = await apiFetch('/api/orders-active', {}, FETCH_TIMEOUT_MS)
+    if (error) {
+      warn('fetchActive:', error)
       set({ loading: false, ready: true })
+      return
     }
+    set({ orders: data?.orders || [], lastSyncAt: Date.now(), loading: false, ready: true })
+    markSuccess()
+    log('fetchActive OK', data?.orders?.length)
   },
 
-  // Pedidos del día (Orders → "Todos del día"). Excluye anulados.
   fetchToday: async (force = false) => {
     const now = Date.now()
-    if (!force && now - lastTodayRefresh < TODAY_REFRESH_THROTTLE) return
+    if (!force && now - lastTodayRefresh < TODAY_THROTTLE_MS) return
     lastTodayRefresh = now
 
-    try {
-      const start = new Date(); start.setHours(0, 0, 0, 0)
-      const { data, error } = await supabaseWithTimeout(
-        supabase
-          .from('orders')
-          .select('*, order_items(*)')
-          .gte('created_at', start.toISOString())
-          .eq('deleted_from_reports', false)
-          .order('created_at', { ascending: false })
-          .limit(500),
-        FETCH_TIMEOUT_MS,
-        'Tiempo de espera al cargar pedidos del día'
-      )
-      if (error) throw error
-      set({ todayOrders: data || [], lastSyncAt: Date.now() })
-    } catch (err) {
-      console.error('fetchToday error:', err?.message || err)
-      // no toast aquí; es refresco secundario, mejor no molestar
+    const { data, error } = await apiFetch('/api/orders-today', {}, FETCH_TIMEOUT_MS)
+    if (error) {
+      warn('fetchToday:', error)
+      return
     }
+    set({ todayOrders: data?.orders || [], lastSyncAt: Date.now() })
+    markSuccess()
   },
 
-  // Refetch manual completo (botón "Actualizar" en Cocina/Pedidos)
   manualRefresh: async () => {
     log('manualRefresh')
     await Promise.all([get().fetchActive(), get().fetchToday(true)])
   },
 
   // ============================================================
-  //  Polling de respaldo GLOBAL
-  // ============================================================
-  //
-  //  El realtime websocket es la fuente primaria. El polling es un
-  //  respaldo por si el websocket muere silenciosamente o se pierden
-  //  eventos cuando la tablet duerme.
-  //
-  //  Este polling vive a nivel App (mientras hay sesión), no solo
-  //  cuando se monta Cocina. Así Pedidos/Cocina ven los cambios
-  //  aunque el websocket esté caído.
-  //
-  //  Cadencia adaptativa:
-  //    • Realtime conectado + tab visible       → cada 30s
-  //    • Realtime conectado + tab oculta        → no hacer nada
-  //    • Realtime caído + tab visible           → cada 10s (agresivo)
-  //    • Realtime caído + tab oculta            → no hacer nada
-  // ============================================================
-  startGlobalPolling: () => {
-    if (kitchenPollTimer) return  // ya activo
-    log('global polling: start')
-    kitchenPollTimer = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
-      const rt = get().realtimeStatus
-      const desired = rt === 'connected' ? 30_000 : 10_000
-      if (Date.now() - kitchenLastPoll < desired) return
-      kitchenLastPoll = Date.now()
-      // Refrescamos ambas listas en background, sin bloquear
-      get().fetchActive().catch(() => {})
-      get().fetchToday(true).catch(() => {})
-    }, 5_000)  // chequeo cada 5s, decide internamente
-  },
-
-  stopGlobalPolling: () => {
-    if (kitchenPollTimer) {
-      clearInterval(kitchenPollTimer)
-      kitchenPollTimer = null
-      log('global polling: stop')
-    }
-  },
-
-  // Alias para compatibilidad con Kitchen.jsx existente
-  startKitchenPolling: () => get().startGlobalPolling(),
-  stopKitchenPolling:  () => { /* el polling sigue global, no se detiene al salir de Cocina */ },
-
-  // ============================================================
-  //  Realtime — suscripción robusta con reconexión
-  // ============================================================
-  subscribe: () => {
-    // Si ya hay un canal vivo y conectado, no rehacemos.
-    const status = get().realtimeStatus
-    if (channel && (status === 'connected' || status === 'connecting')) {
-      log('subscribe: skip, ya en', status)
-      return
-    }
-
-    // Si había un canal previo en estado raro, lo limpiamos primero.
-    if (channel) {
-      try { supabase.removeChannel(channel) } catch {}
-      channel = null
-    }
-
-    set({ realtimeStatus: 'connecting' })
-    useHealthStore.getState().setRealtimeStatus('connecting')
-    log('subscribe: creando canal', CHANNEL_NAME)
-
-    channel = supabase
-      .channel(CHANNEL_NAME)
-      // -------- INSERT/UPDATE/DELETE en orders --------
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders' },
-        (payload) => handleOrderChange(payload, set, get)
-      )
-      // -------- UPDATE en order_items (por si editan productos) --------
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'order_items' },
-        (payload) => handleItemChange(payload, set, get)
-      )
-      .subscribe((subStatus, err) => {
-        log('realtime status:', subStatus, err || '')
-        const health = useHealthStore.getState()
-        if (subStatus === 'SUBSCRIBED') {
-          reconnectAttempt = 0
-          set({ realtimeStatus: 'connected' })
-          health.setRealtimeStatus('connected')
-          // Al (re)conectar, sincronizamos por si nos perdimos eventos.
-          get().fetchActive()
-          get().fetchToday(true)
-        } else if (subStatus === 'CHANNEL_ERROR' || subStatus === 'TIMED_OUT') {
-          warn('realtime falló:', subStatus, err)
-          health.setRealtimeStatus('reconnecting')
-          scheduleReconnect(set, get)
-        } else if (subStatus === 'CLOSED') {
-          set({ realtimeStatus: 'disconnected' })
-          health.setRealtimeStatus('disconnected')
-        }
-      })
-  },
-
-  unsubscribe: () => {
-    log('unsubscribe')
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
-    reconnectAttempt = 0
-    if (channel) {
-      try { supabase.removeChannel(channel) } catch {}
-      channel = null
-    }
-    set({ realtimeStatus: 'idle' })
-    useHealthStore.getState().setRealtimeStatus('idle')
-  },
-
-  // ============================================================
-  //  createOrder — usa RPC transaccional
-  // ============================================================
-  //
-  //  Una sola llamada al backend que en UNA transacción:
-  //    • verifica idempotency (client_request_id)
-  //    • inserta order
-  //    • inserta order_items
-  //    • aplica trigger de beneficios
-  //    • devuelve pedido completo con items
-  //
-  //  Si algo falla, PostgreSQL hace rollback. Cero pedidos parciales.
-  //  Cero awaits encadenados en el frontend = cero puntos de cuelgue.
-  //
-  //  Defensa en profundidad:
-  //    1. ensureSystemReady ANTES (no descubrimos problema al hacer insert)
-  //    2. AbortController real con timeout duro
-  //    3. Compensación: si Postgres tira error de beneficio, lo formateamos
-  // ============================================================
-  // ============================================================
-  //  createOrder — POST a /api/create-order (serverless)
-  // ============================================================
-  //
-  //  ARQUITECTURA:
-  //    Frontend → fetch('/api/create-order') → Vercel function →
-  //    cliente Supabase FRESCO en el servidor → RPC transaccional →
-  //    respuesta JSON al frontend.
-  //
-  //  POR QUÉ NO ATACAR SUPABASE DIRECTO DESDE EL NAVEGADOR:
-  //    El cliente Supabase del navegador puede quedar stale después
-  //    de horas abiertas (locks zombi, websocket muerto, token vencido).
-  //    Una function serverless crea un cliente Supabase nuevo en cada
-  //    request y muere al terminar — imposible que esté stale.
-  //
-  //  SEGURIDAD:
-  //    El JWT del usuario va en Authorization Bearer. El endpoint lo
-  //    valida contra Supabase Auth antes de tocar la BD. created_by
-  //    se deriva del JWT, no del body.
-  //
-  //  TIMEOUTS:
-  //    AbortController duro de 12s en el cliente. Si el endpoint tarda
-  //    más, el frontend libera el botón y muestra "Reintentar".
-  //    El endpoint a su vez tiene timeout interno de 9s contra Postgres.
+  //  Escrituras — todas vía API serverless
   // ============================================================
   createOrder: async (orderData, items) => {
-    log('createOrder: starting')
+    // POST /api/create-order con AbortController duro
+    const ctrl = new AbortController()
+    const abortTimer = setTimeout(() => ctrl.abort(), 10_000)
 
-    // ===== 1. OBTENER TOKEN SIN TOCAR EL SDK DE SUPABASE =====
-    //
-    // CRÍTICO: lectura SÍNCRONA de localStorage. NO usamos
-    // supabase.auth.getSession() porque ese método agarra un lock
-    // interno del SDK que puede quedar zombi tras horas idle, dejando
-    // la promesa colgada para siempre (ni resuelve ni rechaza).
-    //
-    // localStorage es síncrono y no se puede colgar. Si la sesión
-    // está ahí (que es lo normal), la leemos en 1ms. Si no está,
-    // mostramos error claro. NUNCA hacemos await a nada del SDK
-    // antes del fetch al endpoint.
-    const accessToken = readAccessTokenSync()
-    if (!accessToken) {
-      throw new Error('Sesión expirada. Vuelve a iniciar sesión.')
-    }
-
-    // ===== 2. Validar online =====
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      throw new Error('Sin conexión a internet. Verifica el wifi.')
-    }
-
-    // ===== 3. Construir payload =====
+    // Construir payload
     const subtotal = orderData.subtotal ?? items.reduce(
       (s, it) => s + (it.subtotal ?? it.unit_price * it.quantity), 0
     )
@@ -354,106 +129,90 @@ export const useOrderStore = create((set, get) => ({
       })),
     }
 
-    // POST con AbortController real
-    const t0 = Date.now()
-    const controller = new AbortController()
-    const abortTimer = setTimeout(() => controller.abort(), CREATE_ORDER_TIMEOUT_MS)
-
-    let response
-    try {
-      response = await fetch('/api/create-order', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      })
-    } catch (err) {
-      clearTimeout(abortTimer)
-      if (err?.name === 'AbortError') {
-        // Si el cliente abortó por timeout, el pedido pudo haberse creado
-        // igual. Al reintentar con el mismo client_request_id, el RPC
-        // detectará el duplicado y devolverá el original.
-        throw new Error('El servidor tardó demasiado. Pulsa reintentar.')
-      }
-      // Errores de red (DNS, sin conexión, CORS)
-      throw new Error('Sin conexión con el servidor. Verifica internet y reintenta.')
-    }
+    const { data, error } = await apiFetch(
+      '/api/create-order',
+      { method: 'POST', body: payload, signal: ctrl.signal },
+      10_000
+    )
     clearTimeout(abortTimer)
 
-    // Parsear respuesta
-    let result
-    try {
-      result = await response.json()
-    } catch {
-      throw new Error('Respuesta inválida del servidor. Reintenta.')
-    }
-
-    if (!response.ok || !result.success) {
-      const msg = result?.error || `Error del servidor (${response.status})`
-      // Mensajes amigables ya vienen del endpoint (parseBenefitError aplicado allí)
-      throw new Error(msg)
-    }
+    if (error) throw new Error(error)
+    if (!data?.order) throw new Error('El servidor no devolvió el pedido.')
 
     markSuccess()
-    log('createOrder: OK en', Date.now() - t0, 'ms', result.order?.order_number,
-        result.order?._idempotent_hit ? '(idempotent hit)' : '')
+    log('createOrder OK', data.order.order_number)
 
-    // ===== Refresh en BACKGROUND, sin await =====
-    // El pedido ya está creado y devuelto. Refrescamos las listas
-    // (Pedidos del día, Cocina) en segundo plano. Si esto falla por
-    // cualquier razón (red lenta, lock zombi del cliente Supabase),
-    // NO afecta al usuario — el pedido ya está confirmado. Las listas
-    // también se actualizarán solas vía Realtime + polling.
+    // Insertar en estado local inmediatamente (no esperar a refetch)
+    const newOrder = data.order
+    if (Array.isArray(newOrder.order_items) || newOrder.id) {
+      set((s) => {
+        const isActive = ['pendiente', 'en_preparacion', 'listo'].includes(newOrder.status)
+        const without = s.orders.filter(o => o.id !== newOrder.id)
+        return {
+          orders: isActive ? [...without, newOrder] : without,
+          todayOrders: [newOrder, ...s.todayOrders.filter(o => o.id !== newOrder.id)],
+        }
+      })
+    }
+
+    // Refresh en background sin await
     setTimeout(() => {
       get().fetchActive().catch(() => {})
       get().fetchToday(true).catch(() => {})
     }, 0)
 
-    return result.order
+    return newOrder
   },
 
   updateStatus: async (id, status) => {
-    const { error } = await supabaseWithTimeout(
-      supabase.from('orders').update({ status }).eq('id', id),
-      FETCH_TIMEOUT_MS,
-      'No se pudo actualizar el estado a tiempo'
+    const body = { id, status }
+    const { error } = await apiFetch(
+      '/api/order-status',
+      { method: 'PATCH', body },
+      FETCH_TIMEOUT_MS
     )
-    if (error) throw error
+    if (error) throw new Error(error)
+    // Refresh en background
+    setTimeout(() => {
+      get().fetchActive().catch(() => {})
+      get().fetchToday(true).catch(() => {})
+    }, 0)
   },
 
   cancelOrder: async (id, reason) => {
-    const { error } = await supabaseWithTimeout(
-      supabase.from('orders').update({ status: 'cancelado', cancel_reason: reason || null }).eq('id', id),
-      FETCH_TIMEOUT_MS,
-      ''
+    const { error } = await apiFetch(
+      '/api/order-status',
+      { method: 'PATCH', body: { id, status: 'cancelado', cancel_reason: reason || null } },
+      FETCH_TIMEOUT_MS
     )
-    if (error) throw error
+    if (error) throw new Error(error)
+    setTimeout(() => {
+      get().fetchActive().catch(() => {})
+      get().fetchToday(true).catch(() => {})
+    }, 0)
   },
 
   updateOrder: async (id, patch) => {
-    const { error } = await supabaseWithTimeout(
-      supabase.from('orders').update(patch).eq('id', id),
-      FETCH_TIMEOUT_MS,
-      ''
+    const { error } = await apiFetch(
+      '/api/order-edit',
+      { method: 'PATCH', body: { id, patch } },
+      FETCH_TIMEOUT_MS
     )
-    if (error) throw error
+    if (error) throw new Error(error)
+    setTimeout(() => {
+      get().fetchActive().catch(() => {})
+      get().fetchToday(true).catch(() => {})
+    }, 0)
   },
 
-  softDeleteOrder: async (id, reason, userId) => {
-    const { error } = await supabaseWithTimeout(
-      supabase.from('orders').update({
-        deleted_from_reports: true,
-        deleted_at: new Date().toISOString(),
-        deleted_by: userId || null,
-        delete_reason: reason || null,
-      }).eq('id', id),
-      FETCH_TIMEOUT_MS,
-      ''
+  softDeleteOrder: async (id, reason) => {
+    const { error } = await apiFetch(
+      '/api/order-soft-delete',
+      { method: 'PATCH', body: { id, reason: reason || null } },
+      FETCH_TIMEOUT_MS
     )
-    if (error) throw error
+    if (error) throw new Error(error)
+    // Quitar de listas inmediato
     set((s) => ({
       orders:      s.orders.filter(o => o.id !== id),
       todayOrders: s.todayOrders.filter(o => o.id !== id),
@@ -461,134 +220,141 @@ export const useOrderStore = create((set, get) => ({
   },
 
   restoreOrder: async (id) => {
-    const { error } = await supabaseWithTimeout(
-      supabase.from('orders').update({
-        deleted_from_reports: false,
-        deleted_at: null,
-        deleted_by: null,
-        delete_reason: null,
-      }).eq('id', id),
-      FETCH_TIMEOUT_MS,
-      ''
+    const { error } = await apiFetch(
+      '/api/order-restore',
+      { method: 'PATCH', body: { id } },
+      FETCH_TIMEOUT_MS
     )
-    if (error) throw error
-    get().fetchToday(true)
+    if (error) throw new Error(error)
+    setTimeout(() => {
+      get().fetchActive().catch(() => {})
+      get().fetchToday(true).catch(() => {})
+    }, 0)
   },
+
+  // ============================================================
+  //  Realtime — usado solo como SEÑAL.
+  //  Cuando llega un evento, refrescamos vía API serverless.
+  //  Si el realtime muere, el polling toma el relevo.
+  // ============================================================
+  subscribe: () => {
+    const status = get().realtimeStatus
+    if (channel && (status === 'connected' || status === 'connecting')) {
+      log('subscribe: skip, ya en', status)
+      return
+    }
+    if (channel) {
+      try { supabase.removeChannel(channel) } catch {}
+      channel = null
+    }
+
+    set({ realtimeStatus: 'connecting' })
+    useHealthStore.getState().setRealtimeStatus('connecting')
+    log('subscribe: creando canal', CHANNEL_NAME)
+
+    channel = supabase
+      .channel(CHANNEL_NAME)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        (payload) => {
+          log('rt orders event:', payload.eventType)
+          // SEÑAL: cualquier cambio dispara refresh vía API
+          get().fetchActive().catch(() => {})
+          get().fetchToday().catch(() => {})
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'order_items' },
+        (payload) => {
+          log('rt items event:', payload.eventType)
+          get().fetchActive().catch(() => {})
+          get().fetchToday().catch(() => {})
+        }
+      )
+      .subscribe((subStatus, err) => {
+        log('realtime status:', subStatus, err || '')
+        const health = useHealthStore.getState()
+        if (subStatus === 'SUBSCRIBED') {
+          reconnectAttempt = 0
+          set({ realtimeStatus: 'connected' })
+          health.setRealtimeStatus('connected')
+          // Al (re)conectar, refrescamos
+          get().fetchActive().catch(() => {})
+          get().fetchToday(true).catch(() => {})
+        } else if (subStatus === 'CHANNEL_ERROR' || subStatus === 'TIMED_OUT') {
+          warn('realtime falló:', subStatus, err)
+          health.setRealtimeStatus('reconnecting')
+          scheduleReconnect(set, get)
+        } else if (subStatus === 'CLOSED') {
+          set({ realtimeStatus: 'disconnected' })
+          health.setRealtimeStatus('disconnected')
+        }
+      })
+  },
+
+  unsubscribe: () => {
+    log('unsubscribe')
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+    reconnectAttempt = 0
+    if (channel) {
+      try { supabase.removeChannel(channel) } catch {}
+      channel = null
+    }
+    set({ realtimeStatus: 'idle' })
+    useHealthStore.getState().setRealtimeStatus('idle')
+  },
+
+  // ============================================================
+  //  Polling global de respaldo
+  //  Usa /api/* (no Supabase directo). Si el realtime muere,
+  //  el polling sigue trayendo datos.
+  // ============================================================
+  startGlobalPolling: () => {
+    if (pollTimer) return
+    log('global polling: start')
+    pollTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      const rt = get().realtimeStatus
+      const inKitchenOrOrders = typeof location !== 'undefined' &&
+        (location.pathname.startsWith('/cocina') || location.pathname.startsWith('/pedidos'))
+
+      // Cadencia:
+      //  - Cocina/Pedidos visible + realtime caído: 5s
+      //  - Cocina/Pedidos visible + realtime OK:    15s
+      //  - Otras páginas + realtime OK:             60s
+      //  - Otras páginas + realtime caído:          20s
+      let desired
+      if (inKitchenOrOrders) {
+        desired = rt === 'connected' ? 15_000 : 5_000
+      } else {
+        desired = rt === 'connected' ? 60_000 : 20_000
+      }
+
+      if (Date.now() - lastPollAt < desired) return
+      lastPollAt = Date.now()
+
+      get().fetchActive().catch(() => {})
+      get().fetchToday(true).catch(() => {})
+    }, 2_500)  // chequea cada 2.5s, decide internamente
+  },
+
+  stopGlobalPolling: () => {
+    if (pollTimer) {
+      clearInterval(pollTimer)
+      pollTimer = null
+      log('global polling: stop')
+    }
+  },
+
+  // Compat con Kitchen.jsx (los métodos viejos delegan al polling global)
+  startKitchenPolling: () => get().startGlobalPolling(),
+  stopKitchenPolling:  () => { /* el polling sigue global */ },
 }))
 
 // ============================================================
-//  Manejo de eventos realtime (fuera del create para mantenerlo legible)
-// ============================================================
-async function handleOrderChange(payload, set, get) {
-  const { eventType, new: newRow, old: oldRow } = payload
-  log('rt orders:', eventType, newRow?.id || oldRow?.id)
-
-  // -------- INSERT --------
-  if (eventType === 'INSERT') {
-    if (newRow.deleted_from_reports) return
-
-    // Anti-duplicación: si ya existe en el store, no insertar dos veces
-    // (puede pasar si fetchActive y el INSERT realtime llegan en orden raro).
-    const existing = get().orders.find(o => o.id === newRow.id)
-    if (existing) {
-      log('INSERT ya existía en store, ignoro')
-      return
-    }
-
-    // Necesitamos el order_items, que el INSERT realtime de orders no trae.
-    try {
-      const { data } = await supabase
-        .from('orders')
-        .select('*, order_items(*)')
-        .eq('id', newRow.id)
-        .single()
-      if (!data) return
-
-      // Verificar de nuevo (entre el INSERT y este fetch otro evento pudo haberlo agregado)
-      const ordersNow = get().orders
-      if (ordersNow.some(o => o.id === data.id)) return
-
-      set((s) => ({ orders: [...s.orders, data] }))
-      toast.success(`Nuevo pedido #${data.order_number}`, { icon: '🍗' })
-      try {
-        const audio = new Audio('/ding.mp3')
-        audio.volume = 0.6
-        audio.play().catch(() => {})  // navegadores requieren interacción previa
-      } catch {}
-    } catch (err) {
-      warn('refetch INSERT falló:', err)
-    }
-    get().fetchToday()
-    return
-  }
-
-  // -------- UPDATE --------
-  if (eventType === 'UPDATE') {
-    // Anulación
-    if (newRow.deleted_from_reports) {
-      set((s) => ({
-        orders:      s.orders.filter(o => o.id !== newRow.id),
-        todayOrders: s.todayOrders.filter(o => o.id !== newRow.id),
-      }))
-      return
-    }
-
-    // Refetch con order_items para tener data consistente
-    try {
-      const { data } = await supabase
-        .from('orders')
-        .select('*, order_items(*)')
-        .eq('id', newRow.id)
-        .single()
-      if (!data) return
-
-      const stillActive = ['pendiente', 'en_preparacion', 'listo'].includes(data.status)
-      set((s) => {
-        const without = s.orders.filter(o => o.id !== data.id)
-        return { orders: stillActive ? [...without, data] : without }
-      })
-    } catch (err) {
-      warn('refetch UPDATE falló:', err)
-    }
-    get().fetchToday()
-    return
-  }
-
-  // -------- DELETE --------
-  if (eventType === 'DELETE') {
-    set((s) => ({
-      orders:      s.orders.filter(o => o.id !== oldRow.id),
-      todayOrders: s.todayOrders.filter(o => o.id !== oldRow.id),
-    }))
-  }
-}
-
-// Si un item cambia (ej. editaron productos), refresca el pedido afectado.
-async function handleItemChange(payload, set, get) {
-  const { new: newRow, old: oldRow } = payload
-  const orderId = newRow?.order_id || oldRow?.order_id
-  if (!orderId) return
-  log('rt items:', payload.eventType, orderId)
-  try {
-    const { data } = await supabase
-      .from('orders')
-      .select('*, order_items(*)')
-      .eq('id', orderId)
-      .single()
-    if (!data) return
-    set((s) => {
-      const stillActive = ['pendiente', 'en_preparacion', 'listo'].includes(data.status)
-      const isAnulled = data.deleted_from_reports === true
-      const without = s.orders.filter(o => o.id !== data.id)
-      return { orders: (stillActive && !isAnulled) ? [...without, data] : without }
-    })
-  } catch (err) {
-    warn('refetch item falló:', err)
-  }
-}
-
-// ============================================================
-//  Reconexión con backoff exponencial
+//  Reconexión exponencial del canal de realtime
 // ============================================================
 function scheduleReconnect(set, get) {
   if (reconnectTimer) return
