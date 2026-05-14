@@ -4,7 +4,7 @@ import {
   FileText, Download, Calendar, BarChart3, TrendingUp, ChevronDown,
   FileSpreadsheet, FileDown, ShoppingBag, DollarSign, Wallet, Target,
   RefreshCw, Trash2, X, AlertTriangle, Loader2, RotateCw,
-  Banknote, ArrowRightLeft,
+  Banknote, ArrowRightLeft, GraduationCap,
 } from 'lucide-react'
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar,
@@ -318,6 +318,26 @@ export default function Reports() {
         <Stat icon={Target}      label="Ticket prom."  value={money(kpis.avgTicket)} accent="yellow"/>
       </div>
 
+      {/* ===== Tarjeta info: Promo estudiante (solo si hubo) ===== */}
+      {(kpis.studentCount > 0 || kpis.studentDiscount > 0) && (
+        <div className="card p-4 mb-6 bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-900">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center">
+              <GraduationCap size={20}/>
+            </div>
+            <div className="flex-1">
+              <div className="text-xs uppercase tracking-wider text-emerald-700 dark:text-emerald-400 font-bold">
+                Promo estudiante
+              </div>
+              <div className="text-sm text-zinc-700 dark:text-zinc-200">
+                <span className="font-bold">{kpis.studentCount}</span> pedido{kpis.studentCount === 1 ? '' : 's'} con la promo ·
+                Descuento total aplicado: <span className="font-bold text-emerald-700 dark:text-emerald-400">{money(kpis.studentDiscount)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ===== Gráfico principal de ventas ===== */}
       <ChartCard
         title="Ventas en el rango"
@@ -469,6 +489,11 @@ export default function Reports() {
                             {o.benefit_type === 'discount' ? '⭐ EMP' : '🎁 CORT'}
                           </span>
                         )}
+                        {o.discount_type === 'student' && (
+                          <span className="ml-1.5 text-[9px] font-extrabold bg-emerald-600 text-white px-1.5 py-0.5 rounded">
+                            🎓 EST
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-2"><span className={`chip pill-${o.status}`}>{STATUS_LABEL[o.status]}</span></td>
                       <td className="px-4 py-2 capitalize">{o.payment_method}</td>
@@ -506,6 +531,11 @@ export default function Reports() {
                     {o.benefit_type && (
                       <span className="ml-1.5 text-[9px] font-extrabold bg-chikin-yellow text-chikin-black px-1.5 py-0.5 rounded">
                         {o.benefit_type === 'discount' ? '⭐ EMP' : '🎁 CORT'}
+                      </span>
+                    )}
+                    {o.discount_type === 'student' && (
+                      <span className="ml-1.5 text-[9px] font-extrabold bg-emerald-600 text-white px-1.5 py-0.5 rounded">
+                        🎓 EST
                       </span>
                     )}
                   </div>

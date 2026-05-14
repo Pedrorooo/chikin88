@@ -201,3 +201,59 @@ export const parseBenefitError = (msg) => {
   if (msg.includes('ya usó su Combo Especial gratis')) return msg.split('ERROR:').pop().trim()
   return msg
 }
+
+// ============================================================
+//  Promo Estudiante — 10% en combos de pollo (mayo 2026)
+//
+//  Detección por sufijo del nombre del cliente: si trim().toLowerCase()
+//  termina en "estudiante", se considera promo activa. El descuento
+//  aplica SOLO a combos de pollo (categoría 'Principales'); jamás a
+//  Combo Ramen, ramen, bebidas, extras, palillos, salsas extra ni
+//  delivery.
+//
+//  Convención: nombres terminados en "88" son empleados/dueños y NO
+//  pueden activar la promo estudiante (los casos son mutuamente
+//  excluyentes — el sufijo "88" gana al final de la cadena).
+// ============================================================
+
+export const STUDENT_SUFFIX = 'estudiante'
+export const STUDENT_DISCOUNT_RATE = 0.10
+export const STUDENT_DISCOUNT_LABEL = 'Promo estudiante 10%'
+
+// Redondeo a 2 decimales sin sesgos por floats
+export const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100
+
+// ¿Este pedido lleva promo estudiante?
+export const detectStudentPromo = (customerName) => {
+  if (!customerName) return false
+  return customerName.trim().toLowerCase().endsWith(STUDENT_SUFFIX)
+}
+
+// ¿Este item es elegible para la promo estudiante?
+// Regla: categoría 'Principales' y product_name NO empieza con 'combo ramen'.
+// Esto incluye automáticamente combos futuros de pollo (Combo Económico/
+// Especial/XXL/Full y cualquier otro de Principales).
+export const isStudentDiscountEligibleItem = (item) => {
+  if (!item) return false
+  const cat  = item.product_category || item.category
+  const name = (item.product_name || item.name || '').toString().toLowerCase()
+  if (cat !== 'Principales') return false
+  if (name.startsWith('combo ramen')) return false
+  return true
+}
+
+// Descuento que aplicaría a UN item del carrito si la promo estudiante
+// estuviera activa. Se calcula sobre unit_price * quantity (base);
+// las salsas extra y el modo "extra" NO se descuentan.
+export const itemStudentDiscount = (item) => {
+  if (!isStudentDiscountEligibleItem(item)) return 0
+  const base = Number(item.unit_price || 0) * Number(item.quantity || 0)
+  return round2(base * STUDENT_DISCOUNT_RATE)
+}
+
+// Total de descuento estudiante sobre un arreglo de items, solo si
+// `isStudent` es true. Si no, devuelve 0.
+export const studentDiscountTotal = (items, isStudent) => {
+  if (!isStudent || !Array.isArray(items)) return 0
+  return round2(items.reduce((s, it) => s + itemStudentDiscount(it), 0))
+}

@@ -54,6 +54,9 @@ export default async function handler(req, res) {
     const expenseTotal = (expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0)
     const cash = rev.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
     const tx   = rev.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
+    // Promo estudiante: solo pedidos válidos cuentan
+    const studentOrders = valid.filter(o => o.discount_type === 'student')
+    const studentDiscountTotal = studentOrders.reduce((s, o) => s + Number(o.discount_amount || 0), 0)
 
     // Productos top
     const map = new Map()
@@ -77,6 +80,8 @@ export default async function handler(req, res) {
     const html = buildEmail({
       titleDate, valid, cancelled, revenue, expenseTotal, profit,
       cash, tx, topProducts, expenses: expenses || [],
+      studentCount: studentOrders.length,
+      studentDiscount: studentDiscountTotal,
     })
 
     const toEmails = (process.env.REPORT_TO_EMAILS || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -118,6 +123,7 @@ export default async function handler(req, res) {
 function buildEmail({
   titleDate, valid, cancelled, revenue, expenseTotal, profit,
   cash, tx, topProducts, expenses,
+  studentCount = 0, studentDiscount = 0,
 }) {
   const $ = (n) => '$' + Number(n || 0).toFixed(2)
   const row = (label, value, color = '#0A0A0A') =>
@@ -193,6 +199,7 @@ function buildEmail({
             ${row('Pedidos cancelados', cancelled.length, '#DC2626')}
             ${row('Pago en efectivo', $(cash))}
             ${row('Pago por transferencia', $(tx))}
+            ${studentCount > 0 ? row(`🎓 Promo estudiante (${studentCount} pedido${studentCount === 1 ? '' : 's'})`, `−${$(studentDiscount)}`, '#15803D') : ''}
           </table>
         </td></tr>
 

@@ -191,6 +191,14 @@ const OrderRow = memo(function OrderRow({ order, canEdit, isAdmin, onEdit, onCan
         </div>
       )}
 
+      {/* Indicador de promo estudiante */}
+      {order.discount_type === 'student' && (
+        <div className="mb-2 text-[10px] font-extrabold inline-block px-2 py-0.5 rounded bg-emerald-600 text-white mr-1">
+          🎓 PROMO ESTUDIANTE
+          {Number(order.discount_amount) > 0 && <span className="ml-1">-{money(order.discount_amount)}</span>}
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-1 mb-2 text-[10px]">
         {order.is_delivery
           ? <span className="chip bg-blue-100 text-blue-700"><Bike size={10}/> Delivery</span>

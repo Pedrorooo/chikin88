@@ -139,6 +139,14 @@ export const computeKpis = (orders, expenses) => {
   const avgTicket = rev.length ? revenue / rev.length : 0
   const cash     = rev.filter(o => o.payment_method === 'efectivo').reduce((s, o) => s + Number(o.total || 0), 0)
   const transfer = rev.filter(o => o.payment_method === 'transferencia').reduce((s, o) => s + Number(o.total || 0), 0)
+  // Promo estudiante: cuántos pedidos y cuánto descuento total se aplicó.
+  // Solo cuenta pedidos válidos (no cancelados ni anulados).
+  const studentOrders = valid.filter(o => o.discount_type === 'student')
+  const studentCount  = studentOrders.length
+  const studentDiscount = valid.reduce(
+    (s, o) => s + (o.discount_type === 'student' ? Number(o.discount_amount || 0) : 0),
+    0
+  )
   return {
     orderCount: valid.length,
     revenue,
@@ -149,6 +157,8 @@ export const computeKpis = (orders, expenses) => {
     anulled,
     courtesies,
     discounts,
+    studentCount,
+    studentDiscount,
     cash,
     transfer,
   }

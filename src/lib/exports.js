@@ -13,7 +13,7 @@ const fmtDateTime = (iso) => new Date(iso).toLocaleString('es-EC', {
 // =================== CSV ===================
 export const exportCSV = ({ orders, rangeLabel }) => {
   const rows = [
-    ['Pedido', 'Fecha', 'Hora', 'Cliente', 'Estado', 'Tipo', 'Pago', 'Subtotal', 'Delivery', 'Total'].join(','),
+    ['Pedido', 'Fecha', 'Hora', 'Cliente', 'Estado', 'Tipo', 'Pago', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total'].join(','),
     ...orders.map(o => {
       const d = new Date(o.created_at)
       return [
@@ -26,6 +26,8 @@ export const exportCSV = ({ orders, rangeLabel }) => {
         o.payment_method,
         Number(o.subtotal || 0).toFixed(2),
         Number(o.delivery_fee || 0).toFixed(2),
+        Number(o.discount_amount || 0).toFixed(2),
+        o.discount_type === 'student' ? 'estudiante' : '',
         Number(o.total || 0).toFixed(2),
       ].join(',')
     }),
@@ -59,13 +61,15 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
     ['Ganancia neta', kpis.profit],
     ['Ticket promedio', kpis.avgTicket],
     ['Pedidos cancelados', kpis.cancelled],
+    ['Pedidos promo estudiante', kpis.studentCount || 0],
+    ['Descuento estudiante total', kpis.studentDiscount || 0],
     ['Efectivo', kpis.cash],
     ['Transferencia', kpis.transfer],
   ]
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumen), 'Resumen')
 
   // Hoja 2: Pedidos
-  const pedidosHeader = ['Pedido', 'Fecha', 'Cliente', 'Teléfono', 'Estado', 'Tipo', 'Pago', 'Subtotal', 'Delivery', 'Total']
+  const pedidosHeader = ['Pedido', 'Fecha', 'Cliente', 'Teléfono', 'Estado', 'Tipo', 'Pago', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total']
   const pedidosRows = orders.map(o => [
     o.order_number,
     fmtDateTime(o.created_at),
@@ -76,6 +80,8 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
     o.payment_method,
     Number(o.subtotal || 0),
     Number(o.delivery_fee || 0),
+    Number(o.discount_amount || 0),
+    o.discount_type === 'student' ? 'estudiante' : '',
     Number(o.total || 0),
   ])
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([pedidosHeader, ...pedidosRows]), 'Pedidos')
@@ -149,6 +155,8 @@ export const exportPDF = async ({ orders, kpis, top, profit, rangeLabel }) => {
     ['Ganancia neta', fmtMoney(kpis.profit)],
     ['Ticket promedio', fmtMoney(kpis.avgTicket)],
     ['Pedidos cancelados', kpis.cancelled.toString()],
+    ['Pedidos promo estudiante', String(kpis.studentCount || 0)],
+    ['Descuento estudiante total', fmtMoney(kpis.studentDiscount || 0)],
     ['Cobrado en efectivo', fmtMoney(kpis.cash)],
     ['Cobrado por transferencia', fmtMoney(kpis.transfer)],
   ]
@@ -211,19 +219,22 @@ export const exportPDF = async ({ orders, kpis, top, profit, rangeLabel }) => {
     doc.text('Detalle de pedidos', 14, 18)
     doc.autoTable({
       startY: 22,
-      head: [['#', 'Fecha', 'Cliente', 'Estado', 'Pago', 'Total']],
+      head: [['#', 'Fecha', 'Cliente', 'Estado', 'Pago', 'Descuento', 'Total']],
       body: orders.map(o => [
         o.order_number,
         fmtDateTime(o.created_at),
         o.customer_name || '',
         o.status,
         o.payment_method,
+        Number(o.discount_amount || 0) > 0
+          ? `${o.discount_type === 'student' ? '🎓 ' : ''}${fmtMoney(o.discount_amount)}`
+          : '-',
         fmtMoney(o.total),
       ]),
       theme: 'grid',
       headStyles: { fillColor: [214, 40, 40], textColor: [255, 255, 255] },
       styles: { fontSize: 8, cellPadding: 1.8 },
-      columnStyles: { 5: { halign: 'right', fontStyle: 'bold' } },
+      columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right', fontStyle: 'bold' } },
       margin: { left: 14, right: 14 },
     })
   }

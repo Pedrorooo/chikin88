@@ -350,6 +350,11 @@ function OrderCard({ order, onAdvance, onCancel }) {
               {order.benefit_type === 'discount' ? '⭐ Empleado' : '🎁 Cortesía'}
             </span>
           )}
+          {order.discount_type === 'student' && (
+            <span className="chip bg-emerald-600 text-white uppercase font-extrabold">
+              🎓 Promo estudiante
+            </span>
+          )}
         </div>
 
         {/* Items */}

@@ -20,6 +20,9 @@ import {
   itemExtrasTotal, itemSubtotal, itemExtraSauceCount,
   detectEmployee, isOwner, isDiscountEligibleCombo,
   COURTESY_COMBO, employeeDiscountPrice,
+  detectStudentPromo, isStudentDiscountEligibleItem,
+  itemStudentDiscount, studentDiscountTotal,
+  STUDENT_DISCOUNT_RATE, round2,
 } from '../lib/utils'
 
 export default function NewOrder() {
@@ -94,6 +97,16 @@ export default function NewOrder() {
 
   // ---------- Empleado detectado ----------
   const employee = useMemo(() => detectEmployee(customerName), [customerName])
+
+  // ---------- Promo estudiante detectada ----------
+  // Mutuamente excluyente con empleado/dueño: los nombres "88" no
+  // pueden terminar en "estudiante" al mismo tiempo. Por seguridad
+  // anti-conflicto si alguien intentara "Cindy88estudiante", el
+  // backend igual decide por sufijo.
+  const isStudent = useMemo(
+    () => !employee && detectStudentPromo(customerName),
+    [employee, customerName]
+  )
 
   // Si el cliente deja de ser empleado, desactivar beneficio
   useEffect(() => {
@@ -227,7 +240,16 @@ export default function NewOrder() {
   )
   const palillosExtra = utensil === 'palillos' ? PALILLOS_EXTRA_PRICE : 0
   const deliveryAmount = isDelivery ? Number(deliveryFee || 0) : 0
-  const total = productsSubtotal + palillosExtra + deliveryAmount
+
+  // Descuento promo estudiante (informativo en UI; el backend recalcula).
+  // Se aplica solo si el nombre del cliente activa la promo. Si el cliente
+  // es empleado/dueño (sufijo 88), `isStudent` ya viene en false.
+  const studentDiscount = useMemo(
+    () => studentDiscountTotal(items, isStudent),
+    [items, isStudent]
+  )
+
+  const total = round2(productsSubtotal + palillosExtra + deliveryAmount - studentDiscount)
 
   // Cálculo del ahorro por descuento (solo informativo)
   const discountSavings = useMemo(() => {
@@ -408,6 +430,10 @@ export default function NewOrder() {
                   : null
               const courtesyFree =
                 benefitMode === 'courtesy' && p.name === COURTESY_COMBO
+              const studentPrice =
+                (isStudent && isStudentDiscountEligibleItem(p) && specialPrice === null && !courtesyFree)
+                  ? round2(Number(p.price) * (1 - STUDENT_DISCOUNT_RATE))
+                  : null
               return (
                 <motion.button
                   key={p.id || p.name}
@@ -415,7 +441,8 @@ export default function NewOrder() {
                   whileTap={{ scale: 0.96 }}
                   className={cx(
                     'card p-4 text-left hover:border-chikin-red transition-colors group relative',
-                    (specialPrice !== null || courtesyFree) && 'ring-2 ring-chikin-yellow'
+                    (specialPrice !== null || courtesyFree) && 'ring-2 ring-chikin-yellow',
+                    studentPrice !== null && 'ring-2 ring-emerald-400'
                   )}
                 >
                   {(specialPrice !== null || courtesyFree) && (
@@ -428,6 +455,11 @@ export default function NewOrder() {
                       {isOwner(employee)
                         ? (courtesyFree ? '👑 GRATIS' : '👑 DUEÑO')
                         : (courtesyFree ? '🎁 GRATIS' : '⭐ EMPLEADO')}
+                    </span>
+                  )}
+                  {studentPrice !== null && (
+                    <span className="absolute -top-2 -right-2 text-[9px] font-extrabold px-2 py-1 rounded-full shadow-md bg-emerald-500 text-white">
+                      🎓 -10%
                     </span>
                   )}
                   <div className="text-xs uppercase tracking-wider text-zinc-400 mb-1">
@@ -447,6 +479,11 @@ export default function NewOrder() {
                         <>
                           <span className="line-through text-xs text-zinc-400">{money(p.price)}</span>
                           <div className="font-display text-2xl text-chikin-red">{money(specialPrice)}</div>
+                        </>
+                      ) : studentPrice !== null ? (
+                        <>
+                          <span className="line-through text-xs text-zinc-400">{money(p.price)}</span>
+                          <div className="font-display text-2xl text-emerald-600">{money(studentPrice)}</div>
                         </>
                       ) : (
                         <span className="font-display text-2xl text-chikin-red">{money(p.price)}</span>
@@ -473,6 +510,11 @@ export default function NewOrder() {
               onSetMode={setBenefitMode}
               savings={discountSavings}
             />
+          )}
+
+          {/* Banner promo estudiante detectada (mutuamente excluyente con empleado) */}
+          {isStudent && (
+            <StudentPromoBanner savings={studentDiscount} />
           )}
 
           {/* Items */}
@@ -503,6 +545,7 @@ export default function NewOrder() {
                   <CartItem
                     key={it.key}
                     it={it}
+                    isStudent={isStudent}
                     onUpdateQty={updateQty}
                     onRemove={removeItem}
                     onToggleSauce={toggleSauce}
@@ -669,6 +712,12 @@ export default function NewOrder() {
                   <span>-{money(discountSavings)}</span>
                 </div>
               )}
+              {studentDiscount > 0 && (
+                <div className="flex justify-between text-emerald-400">
+                  <span>Descuento estudiante (10%)</span>
+                  <span>-{money(studentDiscount)}</span>
+                </div>
+              )}
             </div>
             <div className="flex justify-between items-baseline mt-3 pt-3 border-t border-chikin-gray-700">
               <span className="font-bold">TOTAL</span>
@@ -789,11 +838,51 @@ function EmployeeBanner({ name, owner, benefitMode, onSetMode, savings }) {
 }
 
 // ============================================================
+//  Banner de promo estudiante
+//
+//  Se muestra cuando el nombre del cliente termina en "estudiante"
+//  (case-insensitive). 10% de descuento aplica solo a combos de
+//  pollo (categoría 'Principales'), NUNCA a Combo Ramen, ramen,
+//  bebidas, extras, palillos, salsas extra ni delivery.
+//
+//  El backend (RPC create_order_with_items) recalcula y persiste
+//  los descuentos por su cuenta. Esta UI solo refleja la promo.
+// ============================================================
+function StudentPromoBanner({ savings }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="card p-3 bg-gradient-to-br from-emerald-300/30 to-emerald-500/20 border-emerald-400"
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-lg">🎓</span>
+        <div className="font-bold text-sm">
+          Promo estudiante activa:&nbsp;
+          <span className="text-emerald-700 dark:text-emerald-400">10% en combos seleccionados</span>
+        </div>
+      </div>
+      <div className="text-[11px] text-zinc-700 dark:text-zinc-300 italic">
+        Aplica a Combo Económico, Especial, XXL y Full · NO aplica a Combo Ramen, bebidas, extras ni delivery.
+        {savings > 0 && (
+          <span className="block text-emerald-600 font-bold mt-0.5 not-italic">
+            Ahorro: {money(savings)}
+          </span>
+        )}
+      </div>
+    </motion.div>
+  )
+}
+
+// ============================================================
 //  Item del carrito (memo para evitar re-renders)
 // ============================================================
-function CartItem({ it, onUpdateQty, onRemove, onToggleSauce, onSetSauceMode, onSetRamenType }) {
+function CartItem({ it, isStudent, onUpdateQty, onRemove, onToggleSauce, onSetSauceMode, onSetRamenType }) {
   const isChicken = it.product_category === 'Principales'
   const isRamen = it.product_category === 'Ramen'
+  const studentEligible = isStudent && isStudentDiscountEligibleItem(it)
+  const studentSaved = studentEligible ? itemStudentDiscount(it) : 0
+  const displaySubtotal = round2(itemSubtotal(it) - studentSaved)
 
   return (
     <motion.div
@@ -805,16 +894,23 @@ function CartItem({ it, onUpdateQty, onRemove, onToggleSauce, onSetSauceMode, on
         'border-2 rounded-xl p-3',
         it.is_benefit_item
           ? 'border-chikin-yellow bg-chikin-yellow/5'
-          : 'border-zinc-200 dark:border-chikin-gray-700'
+          : studentEligible
+            ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20'
+            : 'border-zinc-200 dark:border-chikin-gray-700'
       )}
     >
       <div className="flex items-start gap-2">
         <div className="flex-1">
-          <div className="font-bold text-sm flex items-center gap-1.5">
+          <div className="font-bold text-sm flex items-center gap-1.5 flex-wrap">
             {it.product_name}
             {it.is_benefit_item && (
               <span className="text-[9px] font-extrabold bg-chikin-yellow text-chikin-black px-1.5 py-0.5 rounded">
                 {it.unit_price === 0 ? '🎁 CORTESÍA' : '⭐ EMPLEADO'}
+              </span>
+            )}
+            {studentEligible && (
+              <span className="text-[9px] font-extrabold bg-emerald-600 text-white px-1.5 py-0.5 rounded">
+                🎓 PROMO ESTUDIANTE -10%
               </span>
             )}
           </div>
@@ -822,6 +918,11 @@ function CartItem({ it, onUpdateQty, onRemove, onToggleSauce, onSetSauceMode, on
             {money(it.unit_price)} c/u
             {it.is_benefit_item && it.regular_price > it.unit_price && (
               <span className="line-through ml-1.5 text-zinc-400">{money(it.regular_price)}</span>
+            )}
+            {studentEligible && (
+              <span className="ml-1.5 text-emerald-600 font-bold">
+                -{money(studentSaved)}
+              </span>
             )}
           </div>
         </div>
@@ -843,7 +944,12 @@ function CartItem({ it, onUpdateQty, onRemove, onToggleSauce, onSetSauceMode, on
             <Plus size={14}/>
           </button>
         </div>
-        <div className="font-bold text-chikin-red">{money(itemSubtotal(it))}</div>
+        <div className="text-right">
+          {studentEligible && (
+            <div className="text-[10px] line-through text-zinc-400">{money(itemSubtotal(it))}</div>
+          )}
+          <div className="font-bold text-chikin-red">{money(displaySubtotal)}</div>
+        </div>
       </div>
 
       {/* RAMEN: tipo (picante/carbonara) */}
