@@ -75,6 +75,11 @@ export function withAuth(handler, opts = {}) {
   const { allowedRoles = ['admin', 'empleado', 'mesero', 'cocina'] } = opts
 
   return async (req, res) => {
+    // Headers anti-caché en TODA respuesta de endpoints críticos.
+    // Crítico para POS: jamás queremos que un proxy/CDN/navegador
+    // sirva un 304 o cachee pedidos, estados o reportes.
+    setNoCacheHeaders(res)
+
     try {
       const ctx = await validateRequest(req)
       if (ctx.error) {
@@ -95,4 +100,16 @@ export function withAuth(handler, opts = {}) {
       })
     }
   }
+}
+
+// ============================================================
+//  setNoCacheHeaders — aplica headers anti-caché a la respuesta.
+//  Exportado por separado para que /api/create-order (que no usa
+//  withAuth) también pueda llamarlo.
+// ============================================================
+export function setNoCacheHeaders(res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  res.setHeader('Pragma', 'no-cache')
+  res.setHeader('Expires', '0')
+  res.setHeader('Surrogate-Control', 'no-store')
 }

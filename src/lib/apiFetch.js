@@ -85,6 +85,10 @@ export async function apiFetch(path, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
       headers,
       body: options.body,
       signal: ctrl.signal,
+      // Forzar petición fresca al servidor en cada llamada.
+      // Crítico para POS: jamás queremos servir un 304/cache de
+      // pedidos, estados o reportes.
+      cache: 'no-store',
     })
   } catch (err) {
     clearTimeout(timer)

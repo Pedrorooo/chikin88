@@ -32,6 +32,7 @@
 //    { success: boolean, order?: object, error?: string }
 // =====================================================================
 import { createClient } from '@supabase/supabase-js'
+import { setNoCacheHeaders } from './_lib/auth.js'
 
 export const config = { runtime: 'nodejs' }
 
@@ -40,6 +41,10 @@ export const config = { runtime: 'nodejs' }
 const RPC_TIMEOUT_MS = 9_000
 
 export default async function handler(req, res) {
+  // Headers anti-caché: jamás queremos que un proxy/CDN/navegador
+  // cachee la respuesta de crear pedido.
+  setNoCacheHeaders(res)
+
   // ----- CORS preflight (Vercel lo maneja, pero por si acaso) -----
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
