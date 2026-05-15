@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo, memo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Filter, Edit, Trash2, Bike, ShoppingBag, Clock,
-  Banknote, ArrowRightLeft, X, Check,
+  Banknote, ArrowRightLeft, X, Check, ChevronDown, ChevronUp,
+  FileText, Utensils,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
@@ -11,6 +12,8 @@ import { useAuthStore } from '../store/authStore'
 import {
   ageBucket, minutesSince, money, cx,
   STATUS_LABEL, fmtTime,
+  itemFreeSauces, itemExtraSauceCount, SAUCE_EXTRA_PRICE, PALILLOS_EXTRA_PRICE,
+  MAYO_EXTRA_PRICE,
 } from '../lib/utils'
 
 const FILTERS = [
@@ -144,6 +147,11 @@ const OrderRow = memo(function OrderRow({ order, canEdit, isAdmin, onEdit, onCan
   const isClosed = order.status === 'entregado' || order.status === 'cancelado'
   const isDelivered = order.status === 'entregado'
 
+  // Detalle expandible. Por defecto cerrado para mantener la tarjeta compacta;
+  // el usuario abre con "Ver detalles". El estado se mantiene por tarjeta
+  // mientras la lista esté montada (cambiar de filtro re-monta y se cierra).
+  const [expanded, setExpanded] = useState(false)
+
   return (
     <motion.div
       layout
@@ -223,6 +231,15 @@ const OrderRow = memo(function OrderRow({ order, canEdit, isAdmin, onEdit, onCan
       <div className="flex items-center justify-between">
         <span className="font-display text-xl text-chikin-red">{money(order.total)}</span>
         <div className="flex gap-1">
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="btn bg-zinc-100 dark:bg-chikin-gray-800 px-3 py-2 text-xs"
+            aria-expanded={expanded}
+            title={expanded ? 'Ocultar detalles' : 'Ver detalles'}
+          >
+            {expanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+            <span className="hidden sm:inline ml-1">{expanded ? 'Ocultar' : 'Detalles'}</span>
+          </button>
           {canEdit && isActive && (
             <>
               <button onClick={onEdit}
@@ -247,9 +264,309 @@ const OrderRow = memo(function OrderRow({ order, canEdit, isAdmin, onEdit, onCan
           )}
         </div>
       </div>
+
+      {/* Panel expandible con detalle completo del pedido. Renderizado defensivo:
+          si un campo no existe en el pedido, simplemente no se muestra esa línea. */}
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="details"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            <OrderDetails order={order}/>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   )
 })
+
+// ============================================================
+//  OrderDetails — panel expandible con TODA la información del pedido
+//
+//  Renderizado defensivo: cada bloque/línea verifica que el dato
+//  exista en el pedido. Si un campo es null/undefined o vacío, esa
+//  línea no se muestra; el panel no se rompe. Esto cubre pedidos
+//  anteriores a algunas migraciones (mayo_extra, discount_*, etc.)
+//  sin necesidad de recalcular ni modificar registros existentes.
+// ============================================================
+function OrderDetails({ order }) {
+  const items = Array.isArray(order.order_items) ? order.order_items : []
+  const hasMayo = typeof order.with_mayo === 'boolean'
+  const mayoExtra = Number(order.mayo_extra || 0)
+  const palillosExtra = order.utensil === 'palillos' ? PALILLOS_EXTRA_PRICE : 0
+  const mayoExtraTotal = Math.round(mayoExtra * MAYO_EXTRA_PRICE * 100) / 100
+  const deliveryFee = Number(order.delivery_fee || 0)
+  const subtotal = Number(order.subtotal || 0)
+  const discountAmount = Number(order.discount_amount || 0)
+  const total = Number(order.total || 0)
+
+  return (
+    <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-chikin-gray-700 space-y-4 text-sm">
+      {/* ---------- Productos ---------- */}
+      {items.length > 0 && (
+        <div>
+          <div className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 mb-2 flex items-center gap-1">
+            <ShoppingBag size={12}/> Productos ({items.length})
+          </div>
+          <div className="space-y-2">
+            {items.map((it, idx) => (
+              <ItemDetail key={it.id || idx} item={it}/>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ---------- Preferencias generales ---------- */}
+      <div>
+        <div className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 mb-2 flex items-center gap-1">
+          <Utensils size={12}/> Preferencias
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+          {hasMayo && (
+            <DetailRow label="Mayonesa">
+              {order.with_mayo ? 'Con' : 'Sin'}
+            </DetailRow>
+          )}
+          {hasMayo && order.with_mayo && mayoExtra > 0 && (
+            <DetailRow label="Mayo extra">
+              <span className="font-bold">×{mayoExtra}</span>
+              <span className="ml-1 text-amber-600">+{money(mayoExtraTotal)}</span>
+            </DetailRow>
+          )}
+          {order.utensil && (
+            <DetailRow label="Cubierto">
+              {order.utensil === 'tenedor' ? 'Tenedor'
+                : order.utensil === 'palillos' ? 'Palillos'
+                : order.utensil === 'ninguno' ? 'Ninguno'
+                : order.utensil}
+              {palillosExtra > 0 && (
+                <span className="ml-1 text-amber-600">+{money(palillosExtra)}</span>
+              )}
+            </DetailRow>
+          )}
+          {order.is_delivery && (
+            <DetailRow label="Delivery">
+              Sí {deliveryFee > 0 && <span className="ml-1 text-blue-600">+{money(deliveryFee)}</span>}
+            </DetailRow>
+          )}
+          {order.order_type && !order.is_delivery && (
+            <DetailRow label="Tipo">
+              {order.order_type === 'abierto' ? 'Abierto' : 'Para llevar'}
+            </DetailRow>
+          )}
+          {order.payment_method && (
+            <DetailRow label="Pago">
+              {order.payment_method === 'efectivo' ? 'Efectivo' : 'Transferencia'}
+            </DetailRow>
+          )}
+          {order.customer_phone && (
+            <DetailRow label="Teléfono">{order.customer_phone}</DetailRow>
+          )}
+        </div>
+      </div>
+
+      {/* ---------- Beneficios / promos ---------- */}
+      {(order.benefit_type || order.discount_type === 'student') && (
+        <div>
+          <div className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 mb-2">
+            Beneficios
+          </div>
+          <div className="space-y-1">
+            {order.benefit_type && (
+              <div className="text-xs flex items-center gap-2 bg-chikin-yellow/20 px-2 py-1.5 rounded">
+                <span className="font-extrabold">
+                  {order.benefit_type === 'discount' ? '⭐ Descuento empleado' : '🎁 Cortesía empleado'}
+                </span>
+                {order.benefit_employee && (
+                  <span className="text-zinc-700 dark:text-zinc-300">· {order.benefit_employee}</span>
+                )}
+              </div>
+            )}
+            {order.discount_type === 'student' && (
+              <div className="text-xs flex items-center gap-2 bg-emerald-100 dark:bg-emerald-950/30 px-2 py-1.5 rounded">
+                <span className="font-extrabold text-emerald-800 dark:text-emerald-300">
+                  🎓 {order.discount_label || 'Promo estudiante 10%'}
+                </span>
+                {discountAmount > 0 && (
+                  <span className="text-emerald-700 dark:text-emerald-400 font-bold">
+                    −{money(discountAmount)}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ---------- Observaciones ---------- */}
+      {order.notes && order.notes.trim().length > 0 && (
+        <div>
+          <div className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 mb-1 flex items-center gap-1">
+            <FileText size={12}/> Observaciones
+          </div>
+          <div className="text-xs bg-zinc-50 dark:bg-chikin-gray-800 p-2 rounded border border-zinc-200 dark:border-chikin-gray-700 whitespace-pre-wrap">
+            {order.notes}
+          </div>
+        </div>
+      )}
+
+      {/* ---------- Totales ---------- */}
+      <div>
+        <div className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 mb-2">
+          Totales
+        </div>
+        <div className="space-y-1 text-xs">
+          {subtotal > 0 && (
+            <div className="flex justify-between">
+              <span className="text-zinc-500">Subtotal</span>
+              <span>{money(subtotal)}</span>
+            </div>
+          )}
+          {palillosExtra > 0 && (
+            <div className="flex justify-between text-amber-600">
+              <span>Palillos</span>
+              <span>+{money(palillosExtra)}</span>
+            </div>
+          )}
+          {mayoExtraTotal > 0 && (
+            <div className="flex justify-between text-amber-600">
+              <span>Mayonesa extra ×{mayoExtra}</span>
+              <span>+{money(mayoExtraTotal)}</span>
+            </div>
+          )}
+          {deliveryFee > 0 && (
+            <div className="flex justify-between text-blue-600">
+              <span>Delivery</span>
+              <span>+{money(deliveryFee)}</span>
+            </div>
+          )}
+          {discountAmount > 0 && (
+            <div className="flex justify-between text-emerald-600">
+              <span>{order.discount_type === 'student' ? 'Promo estudiante' : 'Descuento'}</span>
+              <span>−{money(discountAmount)}</span>
+            </div>
+          )}
+          <div className="flex justify-between font-bold pt-1 border-t border-zinc-200 dark:border-chikin-gray-700">
+            <span>Total</span>
+            <span className="text-chikin-red font-display text-base">{money(total)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ---------- Tiempos extra (si aplica) ---------- */}
+      {(order.ready_at || order.delivered_at || order.cancelled_at) && (
+        <div className="text-[10px] text-zinc-400 space-y-0.5 pt-2 border-t border-zinc-100 dark:border-chikin-gray-800">
+          <div>Creado: <span className="text-zinc-600 dark:text-zinc-300">{fmtTime(order.created_at)}</span></div>
+          {order.ready_at && (
+            <div>Listo: <span className="text-zinc-600 dark:text-zinc-300">{fmtTime(order.ready_at)}</span></div>
+          )}
+          {order.delivered_at && (
+            <div>Entregado: <span className="text-emerald-600">{fmtTime(order.delivered_at)}</span></div>
+          )}
+          {order.cancelled_at && (
+            <div>Cancelado: <span className="text-rose-600">{fmtTime(order.cancelled_at)}</span></div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================================
+//  ItemDetail — detalle de un order_item: cantidades, salsas,
+//  modo de salsa, tipo de ramen, recargos por salsas extra,
+//  descuento por promo estudiante.
+//
+//  Defensivo: si un campo no existe en el item, no se muestra.
+// ============================================================
+function ItemDetail({ item }) {
+  const qty = Number(item.quantity || 0)
+  const unitPrice = Number(item.unit_price || 0)
+  const subtotal = Number(item.subtotal || 0)
+  const originalUnit = item.original_unit_price != null ? Number(item.original_unit_price) : null
+  const itemDiscount = Number(item.discount_amount || 0)
+  const sauces = Array.isArray(item.sauces) ? item.sauces : []
+  const mode = item.sauce_mode || 'normal'
+  const free = itemFreeSauces(item)
+  const extras = itemExtraSauceCount(item)
+  const extrasCost = mode === 'sin' ? 0 : Math.round(extras * SAUCE_EXTRA_PRICE * qty * 100) / 100
+  const modeLabel =
+    mode === 'sin'    ? 'Sin salsa'
+    : mode === 'aparte' ? 'Aparte'
+    : mode === 'extra'  ? 'Extra (legacy)'
+    : 'Con salsa'
+
+  return (
+    <div className="bg-zinc-50 dark:bg-chikin-gray-800 p-2.5 rounded-lg border border-zinc-200 dark:border-chikin-gray-700">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="font-bold text-sm leading-tight">
+            <span className="text-chikin-red">{qty}×</span> {item.product_name || 'Producto'}
+          </div>
+          {(unitPrice > 0 || originalUnit != null) && (
+            <div className="text-[11px] text-zinc-500 mt-0.5">
+              {originalUnit != null && originalUnit !== unitPrice && (
+                <span className="line-through mr-1">{money(originalUnit)}</span>
+              )}
+              {money(unitPrice)} c/u
+              {itemDiscount > 0 && (
+                <span className="ml-1.5 text-emerald-600 font-bold">
+                  −{money(itemDiscount)}
+                  {item.discount_type === 'student' && ' (estudiante)'}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+        {subtotal > 0 && (
+          <div className="text-sm font-bold text-chikin-red whitespace-nowrap">
+            {money(subtotal)}
+          </div>
+        )}
+      </div>
+
+      {/* Tipo de ramen si aplica */}
+      {item.ramen_type && (
+        <div className="text-[11px] text-zinc-600 dark:text-zinc-300 mt-1.5">
+          <span className="font-semibold">Ramen:</span>{' '}
+          {item.ramen_type === 'picante' ? 'Picante' : item.ramen_type === 'carbonara' ? 'Carbonara' : item.ramen_type}
+        </div>
+      )}
+
+      {/* Modo de salsa + salsas */}
+      {(item.sauce_mode || sauces.length > 0) && (
+        <div className="text-[11px] text-zinc-600 dark:text-zinc-300 mt-1.5">
+          <span className="font-semibold">Salsa:</span> {modeLabel}
+          {mode !== 'sin' && sauces.length > 0 && (
+            <span className="ml-1 text-zinc-500">
+              · {sauces.join(', ')} ({sauces.length}/{free} incl.)
+            </span>
+          )}
+          {extras > 0 && (
+            <div className="text-amber-600 font-bold mt-0.5">
+              {extras} salsa{extras === 1 ? '' : 's'} extra × {money(SAUCE_EXTRA_PRICE)} × {qty} = +{money(extrasCost)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Línea label/valor compacta para el bloque de preferencias.
+function DetailRow({ label, children }) {
+  return (
+    <div className="flex items-baseline gap-1.5 text-xs">
+      <span className="text-zinc-500 min-w-[80px] font-semibold">{label}:</span>
+      <span className="text-zinc-700 dark:text-zinc-200">{children}</span>
+    </div>
+  )
+}
 
 function EditModal({ order, onClose }) {
   const updateOrder = useOrderStore(s => s.updateOrder)
