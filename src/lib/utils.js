@@ -46,13 +46,16 @@ export const SAUCES = [
 ]
 
 // ----- Modos de salsa (solo aplican a productos que admiten salsa) -----
+// Nota: el valor 'extra' se mantiene como aceptado en BD por compat con
+// datos antiguos, pero la UI ya no lo ofrece. Las salsas extra se cobran
+// automáticamente cuando se eligen más salsas que las incluidas.
 export const SAUCE_MODES = [
   { v: 'normal', l: 'Con salsa',  hint: 'Sobre el pollo' },
   { v: 'sin',    l: 'Sin salsa',  hint: 'Sin salsa' },
   { v: 'aparte', l: 'Aparte',     hint: 'Salsa por separado' },
-  { v: 'extra',  l: 'Extra',      hint: '+$0.25 salsa abundante' },
 ]
-// Recargo por el modo "Extra" (independiente del recargo por cantidad de salsas)
+// Recargo histórico del modo "Extra" (sigue calculándose si llega en
+// datos antiguos; el frontend ya no lo aplica a pedidos nuevos).
 export const SAUCE_EXTRA_MODE_PRICE = 0.25
 
 // ----- Tipos de ramen -----
@@ -66,6 +69,8 @@ export const RAMEN_TYPES = [
 export const SAUCE_EXTRA_PRICE = 0.25
 // Si el pedido lleva palillos como cubierto, se suma este recargo (una vez por pedido)
 export const PALILLOS_EXTRA_PRICE = 0.25
+// Mayonesa extra: cada unidad cuesta este valor. Solo se cobra si with_mayo = true.
+export const MAYO_EXTRA_PRICE = 0.25
 
 // Helpers de cálculo
 // Cada item lleva su propio `free_sauces` (heredado del producto al agregarlo).

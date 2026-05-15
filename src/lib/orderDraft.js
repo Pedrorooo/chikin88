@@ -3,7 +3,13 @@
 //
 //  Guarda el pedido que el camarero está armando en localStorage.
 //  Se restaura al cargar la página si quedó algo pendiente, y se
-//  limpia SOLO cuando Supabase confirma la creación exitosa.
+//  limpia cuando:
+//    * Supabase confirma la creación exitosa, o
+//    * el usuario vacía el carrito explícitamente, o
+//    * el carrito queda sin productos (incluso si el nombre sigue
+//      escrito) — antes el draft persistía con nombre y sin items,
+//      lo que confundía al volver a Nuevo. Ahora un pedido sin
+//      productos no se considera borrador válido.
 // ============================================================
 
 const DRAFT_KEY = 'chikin88:newOrderDraft:v2'
@@ -28,6 +34,13 @@ export function loadDraft() {
       localStorage.removeItem(DRAFT_KEY)
       return null
     }
+    // Defensa adicional: si el draft viejo se quedó sin items,
+    // se descarta. Esto cubre cualquier draft persistido por
+    // versiones anteriores del código.
+    if (!Array.isArray(draft.items) || draft.items.length === 0) {
+      localStorage.removeItem(DRAFT_KEY)
+      return null
+    }
     return draft
   } catch {
     return null
@@ -39,12 +52,15 @@ export function clearDraft() {
 }
 
 // ============================================================
-//  hasMeaningfulContent — ¿vale la pena guardar este borrador?
-//  Evitamos guardar un borrador vacío que después confunde al usuario.
+//  isDraftMeaningful — ¿vale la pena guardar este borrador?
+//
+//  Regla actualizada (mayo 2026): un pedido SIN productos no es
+//  un borrador útil. Tener solo el nombre o las observaciones
+//  escritas confunde al usuario que ya vació el carrito a
+//  propósito. Si después agrega productos, el draft se vuelve a
+//  guardar automáticamente con todo el contexto.
 // ============================================================
 export function isDraftMeaningful(draft) {
   if (!draft) return false
-  const hasItems = Array.isArray(draft.items) && draft.items.length > 0
-  const hasName  = draft.customerName && draft.customerName.trim().length > 0
-  return hasItems || hasName
+  return Array.isArray(draft.items) && draft.items.length > 0
 }

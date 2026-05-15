@@ -344,6 +344,11 @@ function OrderCard({ order, onAdvance, onCancel }) {
               : <><ArrowRightLeft size={12}/> Transfer</>}
           </span>
           {!order.with_mayo && <span className="chip bg-rose-500 text-white">SIN mayo</span>}
+          {order.with_mayo && Number(order.mayo_extra) > 0 && (
+            <span className="chip bg-amber-500 text-chikin-black uppercase font-extrabold">
+              Mayo extra ×{order.mayo_extra}
+            </span>
+          )}
           <span className="chip bg-chikin-yellow text-chikin-black uppercase">{order.utensil}</span>
           {order.benefit_type && (
             <span className="chip bg-purple-600 text-white uppercase font-extrabold">

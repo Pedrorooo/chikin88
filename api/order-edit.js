@@ -6,7 +6,7 @@ import { withAuth } from './_lib/auth.js'
 // Whitelist de campos editables (defensa contra mass-assignment)
 const EDITABLE_FIELDS = new Set([
   'customer_name', 'customer_phone', 'order_type', 'is_delivery',
-  'delivery_fee', 'with_mayo', 'utensil', 'payment_method',
+  'delivery_fee', 'with_mayo', 'mayo_extra', 'utensil', 'payment_method',
   'notes', 'subtotal', 'total',
 ])
 

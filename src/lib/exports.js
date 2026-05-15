@@ -2,6 +2,7 @@
 // Importadas dinámicamente en exportPDF/exportExcel para no inflar el bundle inicial.
 
 const fmtMoney = (n) => '$' + (Number(n) || 0).toFixed(2)
+const round2Money = (n) => Math.round((Number(n) || 0) * 100) / 100
 const fmtDate  = (iso) => new Date(iso).toLocaleDateString('es-EC', {
   day: '2-digit', month: '2-digit', year: 'numeric',
 })
@@ -13,7 +14,7 @@ const fmtDateTime = (iso) => new Date(iso).toLocaleString('es-EC', {
 // =================== CSV ===================
 export const exportCSV = ({ orders, rangeLabel }) => {
   const rows = [
-    ['Pedido', 'Fecha', 'Hora', 'Cliente', 'Estado', 'Tipo', 'Pago', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total'].join(','),
+    ['Pedido', 'Fecha', 'Hora', 'Cliente', 'Estado', 'Tipo', 'Pago', 'Mayo', 'Mayo extra', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total'].join(','),
     ...orders.map(o => {
       const d = new Date(o.created_at)
       return [
@@ -24,6 +25,8 @@ export const exportCSV = ({ orders, rangeLabel }) => {
         o.status,
         o.is_delivery ? 'delivery' : o.order_type,
         o.payment_method,
+        o.with_mayo ? 'con' : 'sin',
+        Number(o.mayo_extra || 0),
         Number(o.subtotal || 0).toFixed(2),
         Number(o.delivery_fee || 0).toFixed(2),
         Number(o.discount_amount || 0).toFixed(2),
@@ -48,6 +51,13 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
 
   const wb = XLSX.utils.book_new()
 
+  // Cálculos extra para el resumen
+  const validForExtras = (orders || []).filter(o =>
+    o.status !== 'cancelado' && o.deleted_from_reports !== true
+  )
+  const mayoExtraUnits = validForExtras.reduce((s, o) => s + Number(o.mayo_extra || 0), 0)
+  const mayoExtraIncome = round2Money(mayoExtraUnits * 0.25)
+
   // Hoja 1: Resumen
   const resumen = [
     ['REPORTE CHIKIN88'],
@@ -63,13 +73,15 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
     ['Pedidos cancelados', kpis.cancelled],
     ['Pedidos promo estudiante', kpis.studentCount || 0],
     ['Descuento estudiante total', kpis.studentDiscount || 0],
+    ['Mayonesa extra (unidades)', mayoExtraUnits],
+    ['Mayonesa extra (ingresos)', mayoExtraIncome],
     ['Efectivo', kpis.cash],
     ['Transferencia', kpis.transfer],
   ]
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumen), 'Resumen')
 
   // Hoja 2: Pedidos
-  const pedidosHeader = ['Pedido', 'Fecha', 'Cliente', 'Teléfono', 'Estado', 'Tipo', 'Pago', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total']
+  const pedidosHeader = ['Pedido', 'Fecha', 'Cliente', 'Teléfono', 'Estado', 'Tipo', 'Pago', 'Mayo', 'Mayo extra', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total']
   const pedidosRows = orders.map(o => [
     o.order_number,
     fmtDateTime(o.created_at),
@@ -78,6 +90,8 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
     o.status,
     o.is_delivery ? 'delivery' : o.order_type,
     o.payment_method,
+    o.with_mayo ? 'con' : 'sin',
+    Number(o.mayo_extra || 0),
     Number(o.subtotal || 0),
     Number(o.delivery_fee || 0),
     Number(o.discount_amount || 0),
@@ -121,6 +135,13 @@ export const exportPDF = async ({ orders, kpis, top, profit, rangeLabel }) => {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
 
+  // Mayonesa extra: agregamos un par de líneas al resumen.
+  const validForExtras = (orders || []).filter(o =>
+    o.status !== 'cancelado' && o.deleted_from_reports !== true
+  )
+  const mayoExtraUnits = validForExtras.reduce((s, o) => s + Number(o.mayo_extra || 0), 0)
+  const mayoExtraIncome = round2Money(mayoExtraUnits * 0.25)
+
   // Cabecera con bloque rojo Chikin88
   doc.setFillColor(214, 40, 40) // chikin red
   doc.rect(0, 0, pageWidth, 26, 'F')
@@ -157,6 +178,8 @@ export const exportPDF = async ({ orders, kpis, top, profit, rangeLabel }) => {
     ['Pedidos cancelados', kpis.cancelled.toString()],
     ['Pedidos promo estudiante', String(kpis.studentCount || 0)],
     ['Descuento estudiante total', fmtMoney(kpis.studentDiscount || 0)],
+    ['Mayonesa extra (unidades)', String(mayoExtraUnits)],
+    ['Mayonesa extra (ingresos)', fmtMoney(mayoExtraIncome)],
     ['Cobrado en efectivo', fmtMoney(kpis.cash)],
     ['Cobrado por transferencia', fmtMoney(kpis.transfer)],
   ]

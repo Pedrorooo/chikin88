@@ -16,7 +16,7 @@ import { PRODUCTS, CATEGORIES, isRamenProduct, isChickenProduct } from '../data/
 import {
   SAUCES, SAUCE_MODES, RAMEN_TYPES,
   money, cx,
-  SAUCE_EXTRA_PRICE, PALILLOS_EXTRA_PRICE,
+  SAUCE_EXTRA_PRICE, PALILLOS_EXTRA_PRICE, MAYO_EXTRA_PRICE,
   itemExtrasTotal, itemSubtotal, itemExtraSauceCount,
   detectEmployee, isOwner, isDiscountEligibleCombo,
   COURTESY_COMBO, employeeDiscountPrice,
@@ -45,6 +45,7 @@ export default function NewOrder() {
   const [isDelivery, setIsDelivery]       = useState(false)
   const [deliveryFee, setDeliveryFee]     = useState('')
   const [withMayo, setWithMayo]           = useState(true)
+  const [mayoExtra, setMayoExtra]         = useState(0)
   const [utensil, setUtensil]             = useState('tenedor')
   const [paymentMethod, setPaymentMethod] = useState('efectivo')
   const [notes, setNotes]                 = useState('')
@@ -55,6 +56,9 @@ export default function NewOrder() {
   // ---------- Restaurar borrador al cargar ----------
   // Si la app se cerró/recargó a mitad de pedido, recuperamos lo que había.
   // Se ejecuta UNA SOLA VEZ al montar el componente.
+  //
+  // Importante: loadDraft() ya descarta drafts sin items (ver orderDraft.js).
+  // Si el usuario presionó "Vaciar" antes de salir, no hay nada que restaurar.
   const [draftRestored, setDraftRestored] = useState(false)
   useEffect(() => {
     if (draftRestored) return
@@ -66,6 +70,7 @@ export default function NewOrder() {
       if (typeof d.isDelivery === 'boolean') setIsDelivery(d.isDelivery)
       if (d.deliveryFee)   setDeliveryFee(d.deliveryFee)
       if (typeof d.withMayo === 'boolean') setWithMayo(d.withMayo)
+      if (typeof d.mayoExtra === 'number' && d.mayoExtra >= 0) setMayoExtra(d.mayoExtra)
       if (d.utensil)       setUtensil(d.utensil)
       if (d.paymentMethod) setPaymentMethod(d.paymentMethod)
       if (d.notes)         setNotes(d.notes)
@@ -79,20 +84,25 @@ export default function NewOrder() {
   }, [])
 
   // ---------- Autosave del borrador (debounced) ----------
+  // Si el carrito está vacío, limpiamos el draft activamente para que
+  // un nombre escrito no resucite un pedido descartado al volver a Nuevo.
   useEffect(() => {
     if (!draftRestored) return
     const draft = {
       customerName, customerPhone, orderType, isDelivery, deliveryFee,
-      withMayo, utensil, paymentMethod, notes, benefitMode, items,
+      withMayo, mayoExtra, utensil, paymentMethod, notes, benefitMode, items,
       clientRequestId: clientRequestIdRef.current,
     }
-    // Sólo guardamos si tiene contenido relevante
-    if (!isDraftMeaningful(draft)) return
+    if (!isDraftMeaningful(draft)) {
+      // Carrito vacío = no hay nada que valga la pena recuperar.
+      clearDraft()
+      return
+    }
     const id = setTimeout(() => saveDraft(draft), 600)
     return () => clearTimeout(id)
   }, [
     draftRestored, customerName, customerPhone, orderType, isDelivery, deliveryFee,
-    withMayo, utensil, paymentMethod, notes, benefitMode, items,
+    withMayo, mayoExtra, utensil, paymentMethod, notes, benefitMode, items,
   ])
 
   // ---------- Empleado detectado ----------
@@ -112,6 +122,26 @@ export default function NewOrder() {
   useEffect(() => {
     if (!employee && benefitMode) setBenefitMode(null)
   }, [employee, benefitMode])
+
+  // Si el cliente cambia a Sin mayonesa, resetear mayonesa extra a 0
+  useEffect(() => {
+    if (!withMayo && mayoExtra !== 0) setMayoExtra(0)
+  }, [withMayo, mayoExtra])
+
+  // ---------- Vaciar el pedido por completo ----------
+  // Limpia carrito + draft + reqId. Resetea campos de pedido a su default
+  // para que volver a /nuevo o quedarse en la pantalla muestre formulario
+  // en blanco. El nombre y teléfono se mantienen porque a veces el cliente
+  // pide "lo mismo de antes" y borrarlos sería molesto; pero el draft sí
+  // se limpia, así no resucita al navegar fuera y volver.
+  const clearCart = useCallback(() => {
+    setItems([])
+    setBenefitMode(null)
+    setMayoExtra(0)
+    setNotes('')
+    clearDraft()
+    clientRequestIdRef.current = null
+  }, [])
 
   // ---------- Cargar catálogo desde Supabase ----------
   useEffect(() => {
@@ -200,7 +230,19 @@ export default function NewOrder() {
   }, [])
 
   const removeItem = useCallback((key) => {
-    setItems(prev => prev.filter(it => it.key !== key))
+    setItems(prev => {
+      const next = prev.filter(it => it.key !== key)
+      // Si quitamos el último producto, el pedido ya no existe como
+      // borrador útil: borramos draft + reqId para que el siguiente
+      // pedido nazca limpio. El autosave de todos modos detectaría
+      // un carrito vacío y limpiaría el draft, pero aquí lo hacemos
+      // sincrónicamente para evitar carreras con el debounce.
+      if (next.length === 0) {
+        clearDraft()
+        clientRequestIdRef.current = null
+      }
+      return next
+    })
   }, [])
 
   const toggleSauce = useCallback((key, sauce) => {
@@ -240,6 +282,11 @@ export default function NewOrder() {
   )
   const palillosExtra = utensil === 'palillos' ? PALILLOS_EXTRA_PRICE : 0
   const deliveryAmount = isDelivery ? Number(deliveryFee || 0) : 0
+  // Mayonesa extra: solo cuenta si la mayonesa está activada.
+  // El efecto que escucha withMayo ya fuerza mayoExtra=0 si se elige "Sin",
+  // pero blindamos también el cálculo aquí por si acaso.
+  const mayoExtraCount = withMayo ? Math.max(0, mayoExtra) : 0
+  const mayoExtraTotal = round2(mayoExtraCount * MAYO_EXTRA_PRICE)
 
   // Descuento promo estudiante (informativo en UI; el backend recalcula).
   // Se aplica solo si el nombre del cliente activa la promo. Si el cliente
@@ -249,7 +296,7 @@ export default function NewOrder() {
     [items, isStudent]
   )
 
-  const total = round2(productsSubtotal + palillosExtra + deliveryAmount - studentDiscount)
+  const total = round2(productsSubtotal + palillosExtra + deliveryAmount + mayoExtraTotal - studentDiscount)
 
   // Cálculo del ahorro por descuento (solo informativo)
   const discountSavings = useMemo(() => {
@@ -352,6 +399,7 @@ export default function NewOrder() {
         is_delivery:      isDelivery,
         delivery_fee:     deliveryAmount,
         with_mayo:        withMayo,
+        mayo_extra:       mayoExtraCount,
         utensil,
         payment_method:   paymentMethod,
         notes:            notes.trim() || null,
@@ -525,7 +573,7 @@ export default function NewOrder() {
               </h3>
               {items.length > 0 && (
                 <button
-                  onClick={() => setItems([])}
+                  onClick={clearCart}
                   className="text-xs text-zinc-500 hover:text-chikin-red"
                 >
                   Vaciar
@@ -628,6 +676,49 @@ export default function NewOrder() {
               </div>
             </div>
 
+            {/* Mayonesa extra: stepper. Solo activo cuando Mayonesa = Con. */}
+            <div>
+              <label className="label flex items-center justify-between">
+                <span>Mayonesa extra</span>
+                <span className="text-[10px] font-extrabold bg-chikin-yellow text-chikin-black px-1.5 py-0.5 rounded">
+                  +25¢ c/u
+                </span>
+              </label>
+              <div className={cx(
+                'flex items-center justify-between gap-3 p-2 rounded-xl border-2',
+                withMayo
+                  ? 'bg-white dark:bg-chikin-gray-800 border-zinc-200 dark:border-chikin-gray-700'
+                  : 'bg-zinc-100 dark:bg-chikin-gray-900 border-zinc-200 dark:border-chikin-gray-800 opacity-60'
+              )}>
+                <button
+                  type="button"
+                  onClick={() => setMayoExtra(n => Math.max(0, n - 1))}
+                  disabled={!withMayo || mayoExtra <= 0}
+                  className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-chikin-gray-700 flex items-center justify-center disabled:opacity-40"
+                  aria-label="Menos mayonesa extra"
+                >
+                  <Minus size={16}/>
+                </button>
+                <div className="text-center flex-1">
+                  <div className="font-display text-2xl leading-none">{withMayo ? mayoExtra : 0}</div>
+                  <div className="text-[10px] text-zinc-500 mt-0.5">
+                    {withMayo
+                      ? (mayoExtra > 0 ? `+${money(mayoExtraTotal)}` : 'unidades')
+                      : 'Activa Mayonesa para agregar extra'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMayoExtra(n => n + 1)}
+                  disabled={!withMayo}
+                  className="w-10 h-10 rounded-lg bg-chikin-red text-white flex items-center justify-center disabled:opacity-40"
+                  aria-label="Más mayonesa extra"
+                >
+                  <Plus size={16}/>
+                </button>
+              </div>
+            </div>
+
             {/* Delivery */}
             <div>
               <label className="label flex items-center gap-1.5"><Bike size={14}/> Delivery</label>
@@ -698,6 +789,12 @@ export default function NewOrder() {
                 <div className="flex justify-between text-chikin-yellow/90">
                   <span>Palillos</span>
                   <span>+{money(palillosExtra)}</span>
+                </div>
+              )}
+              {mayoExtraTotal > 0 && (
+                <div className="flex justify-between text-chikin-yellow/90">
+                  <span>Mayonesa extra ×{mayoExtraCount}</span>
+                  <span>+{money(mayoExtraTotal)}</span>
                 </div>
               )}
               {isDelivery && (
@@ -987,7 +1084,7 @@ function CartItem({ it, isStudent, onUpdateQty, onRemove, onToggleSauce, onSetSa
           <div className="text-xs font-bold text-zinc-600 dark:text-zinc-300 uppercase tracking-wider mb-2">
             Modo de salsa
           </div>
-          <div className="grid grid-cols-4 gap-1">
+          <div className="grid grid-cols-3 gap-1">
             {SAUCE_MODES.map(sm => (
               <motion.button
                 key={sm.v}
@@ -1002,12 +1099,6 @@ function CartItem({ it, isStudent, onUpdateQty, onRemove, onToggleSauce, onSetSa
                 )}
               >
                 <span>{sm.l}</span>
-                {sm.v === 'extra' && (
-                  <span className={cx(
-                    'text-[8px] font-extrabold mt-0.5 px-1 rounded',
-                    it.sauce_mode === sm.v ? 'bg-white/25' : 'bg-chikin-yellow text-chikin-black'
-                  )}>+25¢</span>
-                )}
               </motion.button>
             ))}
           </div>

@@ -207,6 +207,12 @@ const OrderRow = memo(function OrderRow({ order, canEdit, isAdmin, onEdit, onCan
           {order.payment_method === 'efectivo' ? <Banknote size={10}/> : <ArrowRightLeft size={10}/>}
           {order.payment_method}
         </span>
+        {!order.with_mayo && <span className="chip bg-rose-100 text-rose-700">SIN mayo</span>}
+        {order.with_mayo && Number(order.mayo_extra) > 0 && (
+          <span className="chip bg-amber-100 text-amber-800 font-extrabold">
+            Mayo extra ×{order.mayo_extra}
+          </span>
+        )}
       </div>
 
       <div className="text-xs text-zinc-600 dark:text-zinc-300 mb-3">
