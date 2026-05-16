@@ -214,7 +214,13 @@ export const buildBenefitsView = ({ employees, usages, orders, today, isoWeek })
   const findOrderNumber = (orderId) => {
     if (!orderId) return null
     const o = orderById.get(orderId)
-    return o?.order_number || null
+    if (!o) return null
+    // Preferir el número diario si existe (pedidos creados tras la migración
+    // 012). Para pedidos viejos cae al número global, que es lo que estaba.
+    if (o.daily_order_number != null && o.daily_order_number !== '') {
+      return o.daily_order_number
+    }
+    return o.order_number || null
   }
 
   // Lista oficial de dueños (defensa extra: aunque la columna `role` de la BD

@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Minus, Trash2, ShoppingBag, User, Phone, Bike,
   Banknote, ArrowRightLeft, MessageSquare, Check, Loader2,
-  Star, Flame, Soup, AlertTriangle, RotateCw,
+  Star, Flame, Soup, AlertTriangle, RotateCw, Wallet,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useOrderStore } from '../store/orderStore'
@@ -48,6 +48,11 @@ export default function NewOrder() {
   const [mayoExtra, setMayoExtra]         = useState(0)
   const [utensil, setUtensil]             = useState('tenedor')
   const [paymentMethod, setPaymentMethod] = useState('efectivo')
+  // Pago mixto: si paymentMethod === 'mixto', estos dos campos deben sumar
+  // exactamente el total del pedido. Para 'efectivo'/'transferencia' la RPC
+  // backend ignora estos y asigna el total al campo que corresponda.
+  const [cashAmount, setCashAmount] = useState('')
+  const [transferAmount, setTransferAmount] = useState('')
   const [notes, setNotes]                 = useState('')
 
   // Beneficios de empleado
@@ -73,6 +78,8 @@ export default function NewOrder() {
       if (typeof d.mayoExtra === 'number' && d.mayoExtra >= 0) setMayoExtra(d.mayoExtra)
       if (d.utensil)       setUtensil(d.utensil)
       if (d.paymentMethod) setPaymentMethod(d.paymentMethod)
+      if (typeof d.cashAmount === 'string') setCashAmount(d.cashAmount)
+      if (typeof d.transferAmount === 'string') setTransferAmount(d.transferAmount)
       if (d.notes)         setNotes(d.notes)
       if (d.benefitMode)   setBenefitMode(d.benefitMode)
       if (Array.isArray(d.items)) setItems(d.items)
@@ -90,11 +97,11 @@ export default function NewOrder() {
     if (!draftRestored) return
     const draft = {
       customerName, customerPhone, orderType, isDelivery, deliveryFee,
-      withMayo, mayoExtra, utensil, paymentMethod, notes, benefitMode, items,
+      withMayo, mayoExtra, utensil, paymentMethod, cashAmount, transferAmount,
+      notes, benefitMode, items,
       clientRequestId: clientRequestIdRef.current,
     }
     if (!isDraftMeaningful(draft)) {
-      // Carrito vacío = no hay nada que valga la pena recuperar.
       clearDraft()
       return
     }
@@ -102,7 +109,8 @@ export default function NewOrder() {
     return () => clearTimeout(id)
   }, [
     draftRestored, customerName, customerPhone, orderType, isDelivery, deliveryFee,
-    withMayo, mayoExtra, utensil, paymentMethod, notes, benefitMode, items,
+    withMayo, mayoExtra, utensil, paymentMethod, cashAmount, transferAmount,
+    notes, benefitMode, items,
   ])
 
   // ---------- Empleado detectado ----------
@@ -139,6 +147,8 @@ export default function NewOrder() {
     setBenefitMode(null)
     setMayoExtra(0)
     setNotes('')
+    setCashAmount('')
+    setTransferAmount('')
     clearDraft()
     clientRequestIdRef.current = null
   }, [])
@@ -298,6 +308,17 @@ export default function NewOrder() {
 
   const total = round2(productsSubtotal + palillosExtra + deliveryAmount + mayoExtraTotal - studentDiscount)
 
+  // ---------- Validación de pago mixto ----------
+  // Si paymentMethod es 'mixto', cashAmount + transferAmount debe igualar total.
+  // Tolerancia de 1 centavo por floats.
+  const cashNum     = paymentMethod === 'mixto' ? (parseFloat(cashAmount) || 0) : 0
+  const transferNum = paymentMethod === 'mixto' ? (parseFloat(transferAmount) || 0) : 0
+  const splitSum    = round2(cashNum + transferNum)
+  const splitDiff   = round2(total - splitSum)
+  // OK si: no es mixto, o cuadra dentro de 1 centavo Y ambos no son cero.
+  const splitOk = paymentMethod !== 'mixto'
+    || (Math.abs(splitDiff) <= 0.01 && !(cashNum === 0 && transferNum === 0))
+
   // Cálculo del ahorro por descuento (solo informativo)
   const discountSavings = useMemo(() => {
     if (benefitMode !== 'discount' && benefitMode !== 'courtesy') return 0
@@ -402,6 +423,8 @@ export default function NewOrder() {
         mayo_extra:       mayoExtraCount,
         utensil,
         payment_method:   paymentMethod,
+        cash_amount:      paymentMethod === 'mixto' ? cashNum : null,
+        transfer_amount:  paymentMethod === 'mixto' ? transferNum : null,
         notes:            notes.trim() || null,
         created_by:       profile?.id || null,
         status:           'pendiente',
@@ -744,24 +767,112 @@ export default function NewOrder() {
             {/* Pago */}
             <div>
               <label className="label">Método de pago</label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button type="button" onClick={() => setPaymentMethod('efectivo')}
                   className={cx(
-                    'py-3 rounded-xl font-semibold border-2 flex items-center justify-center gap-2',
+                    'py-3 rounded-xl font-semibold border-2 flex items-center justify-center gap-1 text-sm',
                     paymentMethod === 'efectivo'
                       ? 'bg-emerald-500 border-emerald-500 text-white'
                       : 'bg-white dark:bg-chikin-gray-800 border-zinc-200 dark:border-chikin-gray-700'
                   )}
-                ><Banknote size={18}/> Efectivo</button>
+                ><Banknote size={16}/> Efectivo</button>
                 <button type="button" onClick={() => setPaymentMethod('transferencia')}
                   className={cx(
-                    'py-3 rounded-xl font-semibold border-2 flex items-center justify-center gap-2',
+                    'py-3 rounded-xl font-semibold border-2 flex items-center justify-center gap-1 text-sm',
                     paymentMethod === 'transferencia'
                       ? 'bg-blue-500 border-blue-500 text-white'
                       : 'bg-white dark:bg-chikin-gray-800 border-zinc-200 dark:border-chikin-gray-700'
                   )}
-                ><ArrowRightLeft size={18}/> Transfer</button>
+                ><ArrowRightLeft size={16}/> Transfer</button>
+                <button type="button" onClick={() => setPaymentMethod('mixto')}
+                  className={cx(
+                    'py-3 rounded-xl font-semibold border-2 flex items-center justify-center gap-1 text-sm',
+                    paymentMethod === 'mixto'
+                      ? 'bg-amber-500 border-amber-500 text-white'
+                      : 'bg-white dark:bg-chikin-gray-800 border-zinc-200 dark:border-chikin-gray-700'
+                  )}
+                ><Wallet size={16}/> Mixto</button>
               </div>
+
+              {/* Split de pago mixto: aparece solo si paymentMethod === 'mixto'.
+                  Validación en vivo: muestra "Falta $X" / "Sobra $X" / "Cuadra".
+                  El botón Enviar queda bloqueado mientras splitOk sea false. */}
+              {paymentMethod === 'mixto' && (
+                <div className="mt-2 p-3 rounded-xl border-2 border-amber-300 dark:border-amber-800/60 bg-amber-50/60 dark:bg-amber-950/20 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300 flex items-center gap-1 mb-1">
+                        <Banknote size={11}/> Efectivo
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <span className="text-zinc-500 text-sm">$</span>
+                        <input className="input py-2 flex-1" type="number" step="0.01" inputMode="decimal"
+                          value={cashAmount}
+                          onChange={e => setCashAmount(e.target.value)}
+                          placeholder="0.00" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300 flex items-center gap-1 mb-1">
+                        <ArrowRightLeft size={11}/> Transferencia
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <span className="text-zinc-500 text-sm">$</span>
+                        <input className="input py-2 flex-1" type="number" step="0.01" inputMode="decimal"
+                          value={transferAmount}
+                          onChange={e => setTransferAmount(e.target.value)}
+                          placeholder="0.00" />
+                      </div>
+                    </div>
+                  </div>
+                  {/* Banner de validación */}
+                  <div className={cx(
+                    'flex items-center justify-between text-xs font-bold px-2 py-1.5 rounded-lg',
+                    splitOk
+                      ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300'
+                  )}>
+                    <span>
+                      Suma: {money(splitSum)} / {money(total)}
+                    </span>
+                    <span>
+                      {splitOk
+                        ? '✓ Cuadra'
+                        : splitDiff > 0
+                          ? `Falta ${money(splitDiff)}`
+                          : `Sobra ${money(Math.abs(splitDiff))}`}
+                    </span>
+                  </div>
+                  {/* Botones helper rápidos */}
+                  <div className="flex gap-1.5">
+                    <button type="button"
+                      onClick={() => {
+                        setCashAmount(total.toFixed(2))
+                        setTransferAmount('0')
+                      }}
+                      className="btn flex-1 text-[10px] py-1 bg-zinc-100 dark:bg-chikin-gray-800">
+                      Todo efectivo
+                    </button>
+                    <button type="button"
+                      onClick={() => {
+                        const half = round2(total / 2)
+                        setCashAmount(half.toFixed(2))
+                        setTransferAmount(round2(total - half).toFixed(2))
+                      }}
+                      className="btn flex-1 text-[10px] py-1 bg-zinc-100 dark:bg-chikin-gray-800">
+                      Mitad y mitad
+                    </button>
+                    <button type="button"
+                      onClick={() => {
+                        setCashAmount('0')
+                        setTransferAmount(total.toFixed(2))
+                      }}
+                      className="btn flex-1 text-[10px] py-1 bg-zinc-100 dark:bg-chikin-gray-800">
+                      Todo transfer
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div>
@@ -849,14 +960,16 @@ export default function NewOrder() {
 
         <button
           onClick={submit}
-          disabled={submitting || items.length === 0}
+          disabled={submitting || items.length === 0 || !splitOk}
           className="w-full btn-xl bg-chikin-red text-white shadow-2xl shadow-chikin-red/40
                      hover:bg-chikin-red-dark uppercase tracking-wider disabled:opacity-60 disabled:cursor-not-allowed">
           {submitting
             ? <><Loader2 className="animate-spin"/> Enviando…</>
-            : submitError
-              ? <><RotateCw size={22}/> Reintentar envío · {money(total)}</>
-              : <><Check size={24}/> Enviar a cocina · {money(total)}</>
+            : !splitOk
+              ? <><AlertTriangle size={22}/> El pago mixto no cuadra</>
+              : submitError
+                ? <><RotateCw size={22}/> Reintentar envío · {money(total)}</>
+                : <><Check size={24}/> Enviar a cocina · {money(total)}</>
           }
         </button>
       </div>

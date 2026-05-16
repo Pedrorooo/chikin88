@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Filter, Edit, Trash2, Bike, ShoppingBag, Clock,
   Banknote, ArrowRightLeft, X, Check, ChevronDown, ChevronUp,
-  FileText, Utensils,
+  FileText, Utensils, Wallet,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
@@ -13,7 +13,7 @@ import {
   ageBucket, minutesSince, money, cx,
   STATUS_LABEL, fmtTime,
   itemFreeSauces, itemExtraSauceCount, SAUCE_EXTRA_PRICE, PALILLOS_EXTRA_PRICE,
-  MAYO_EXTRA_PRICE,
+  MAYO_EXTRA_PRICE, displayOrderNumber,
 } from '../lib/utils'
 
 const FILTERS = [
@@ -55,7 +55,7 @@ export default function Orders() {
   const isAdmin = role === 'admin'
 
   const handleCancel = async (o) => {
-    if (!window.confirm(`¿Cancelar pedido #${o.order_number}?`)) return
+    if (!window.confirm(`¿Cancelar pedido ${displayOrderNumber(o)}?`)) return
     const reason = window.prompt('Motivo (opcional):') || null
     try {
       await cancelOrder(o.id, reason)
@@ -64,7 +64,7 @@ export default function Orders() {
   }
 
   const handleAnular = async (o) => {
-    const msg = `¿Anular pedido #${o.order_number} del reporte?\n\n` +
+    const msg = `¿Anular pedido ${displayOrderNumber(o)} del reporte?\n\n` +
                 `Cliente: ${o.customer_name}\n` +
                 `Total: $${Number(o.total).toFixed(2)}\n\n` +
                 `El pedido NO se elimina (queda en historial de anulaciones), ` +
@@ -73,7 +73,7 @@ export default function Orders() {
     const reason = window.prompt('Motivo de la anulación (opcional):') || null
     try {
       await softDeleteOrder(o.id, reason, profile?.id)
-      toast.success(`Pedido #${o.order_number} anulado`)
+      toast.success(`Pedido ${displayOrderNumber(o)} anulado`)
     } catch (err) {
       console.error(err)
       toast.error('No se pudo anular el pedido')
@@ -166,7 +166,7 @@ const OrderRow = memo(function OrderRow({ order, canEdit, isAdmin, onEdit, onCan
       )}
     >
       <div className="flex items-center justify-between mb-2">
-        <div className="font-display text-2xl">#{order.order_number}</div>
+        <div className="font-display text-2xl">{displayOrderNumber(order)}</div>
         <span className={`chip pill-${order.status}`}>{STATUS_LABEL[order.status]}</span>
       </div>
 
@@ -212,7 +212,9 @@ const OrderRow = memo(function OrderRow({ order, canEdit, isAdmin, onEdit, onCan
           ? <span className="chip bg-blue-100 text-blue-700"><Bike size={10}/> Delivery</span>
           : <span className="chip bg-zinc-100 text-zinc-700"><ShoppingBag size={10}/> {order.order_type === 'abierto' ? 'Abierto' : 'Llevar'}</span>}
         <span className="chip bg-zinc-100 text-zinc-700">
-          {order.payment_method === 'efectivo' ? <Banknote size={10}/> : <ArrowRightLeft size={10}/>}
+          {order.payment_method === 'efectivo' && <Banknote size={10}/>}
+          {order.payment_method === 'transferencia' && <ArrowRightLeft size={10}/>}
+          {order.payment_method === 'mixto' && <Wallet size={10}/>}
           {order.payment_method}
         </span>
         {!order.with_mayo && <span className="chip bg-rose-100 text-rose-700">SIN mayo</span>}
@@ -361,7 +363,19 @@ function OrderDetails({ order }) {
           )}
           {order.payment_method && (
             <DetailRow label="Pago">
-              {order.payment_method === 'efectivo' ? 'Efectivo' : 'Transferencia'}
+              {order.payment_method === 'efectivo' && 'Efectivo'}
+              {order.payment_method === 'transferencia' && 'Transferencia'}
+              {order.payment_method === 'mixto' && (
+                <span>
+                  Mixto
+                  {Number(order.cash_amount) > 0 && (
+                    <span className="ml-1 text-emerald-700">· efectivo {money(order.cash_amount)}</span>
+                  )}
+                  {Number(order.transfer_amount) > 0 && (
+                    <span className="ml-1 text-blue-700">· transfer {money(order.transfer_amount)}</span>
+                  )}
+                </span>
+              )}
             </DetailRow>
           )}
           {order.customer_phone && (
@@ -601,7 +615,7 @@ function EditModal({ order, onClose }) {
         className="bg-white dark:bg-chikin-gray-900 w-full md:max-w-lg rounded-t-3xl md:rounded-3xl p-6 max-h-[90vh] overflow-y-auto"
       >
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-lg">Editar pedido #{order.order_number}</h3>
+          <h3 className="font-bold text-lg">Editar pedido {displayOrderNumber(order)}</h3>
           <button onClick={onClose} className="p-2"><X size={20}/></button>
         </div>
 
@@ -642,6 +656,7 @@ function EditModal({ order, onClose }) {
                   onChange={e => setData({ ...data, payment_method: e.target.value })}>
             <option value="efectivo">Efectivo</option>
             <option value="transferencia">Transferencia</option>
+            <option value="mixto">Mixto</option>
           </select>
           <select className="input" value={data.order_type}
                   onChange={e => setData({ ...data, order_type: e.target.value })}>

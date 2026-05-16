@@ -7,6 +7,7 @@ import { withAuth } from '../server/auth.js'
 const EDITABLE_FIELDS = new Set([
   'customer_name', 'customer_phone', 'order_type', 'is_delivery',
   'delivery_fee', 'with_mayo', 'mayo_extra', 'utensil', 'payment_method',
+  'cash_amount', 'transfer_amount',
   'notes', 'subtotal', 'total',
 ])
 

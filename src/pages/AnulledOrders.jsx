@@ -2,11 +2,11 @@ import { useState, useEffect, useMemo, useCallback, memo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArchiveX, RotateCcw, Filter, Bike, ShoppingBag,
-  Banknote, ArrowRightLeft, AlertTriangle, RefreshCw, Loader2, RotateCw,
+  Banknote, ArrowRightLeft, AlertTriangle, RefreshCw, Loader2, RotateCw, Wallet,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useOrderStore } from '../store/orderStore'
-import { money, cx, fmtTime, fmtDate, STATUS_LABEL } from '../lib/utils'
+import { money, cx, fmtTime, fmtDate, STATUS_LABEL, displayOrderNumber } from '../lib/utils'
 import { apiFetch } from '../lib/apiFetch'
 
 const RANGE_FILTERS = [
@@ -61,14 +61,14 @@ export default function AnulledOrders() {
   )
 
   const handleRestore = async (o) => {
-    const msg = `¿Restaurar el pedido #${o.order_number}?\n\n` +
+    const msg = `¿Restaurar el pedido ${displayOrderNumber(o)}?\n\n` +
                 `Volverá a contar en ventas y reportes.\n` +
                 `Cliente: ${o.customer_name}\n` +
                 `Total: $${Number(o.total).toFixed(2)}`
     if (!window.confirm(msg)) return
     try {
       await restoreOrder(o.id)
-      toast.success(`Pedido #${o.order_number} restaurado`)
+      toast.success(`Pedido ${displayOrderNumber(o)} restaurado`)
       refresh()  // recargar listado
     } catch (err) {
       console.error(err)
@@ -193,7 +193,7 @@ const AnulledRow = memo(function AnulledRow({ order, profile, onRestore }) {
       className="card p-4 border-l-8 border-l-rose-500 opacity-90"
     >
       <div className="flex items-center justify-between mb-2">
-        <div className="font-display text-2xl line-through text-zinc-400">#{order.order_number}</div>
+        <div className="font-display text-2xl line-through text-zinc-400">{displayOrderNumber(order)}</div>
         <span className="chip bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 uppercase font-bold">
           Anulado
         </span>
@@ -216,7 +216,9 @@ const AnulledRow = memo(function AnulledRow({ order, profile, onRestore }) {
           ? <span className="chip bg-blue-100 text-blue-700"><Bike size={10}/> Delivery</span>
           : <span className="chip bg-zinc-100 text-zinc-700"><ShoppingBag size={10}/> {order.order_type === 'abierto' ? 'Abierto' : 'Llevar'}</span>}
         <span className="chip bg-zinc-100 text-zinc-700">
-          {order.payment_method === 'efectivo' ? <Banknote size={10}/> : <ArrowRightLeft size={10}/>}
+          {order.payment_method === 'efectivo' && <Banknote size={10}/>}
+          {order.payment_method === 'transferencia' && <ArrowRightLeft size={10}/>}
+          {order.payment_method === 'mixto' && <Wallet size={10}/>}
           {order.payment_method}
         </span>
         {order.benefit_type && (

@@ -14,10 +14,11 @@ const fmtDateTime = (iso) => new Date(iso).toLocaleString('es-EC', {
 // =================== CSV ===================
 export const exportCSV = ({ orders, rangeLabel }) => {
   const rows = [
-    ['Pedido', 'Fecha', 'Hora', 'Cliente', 'Estado', 'Tipo', 'Pago', 'Mayo', 'Mayo extra', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total'].join(','),
+    ['#Diario', '#Global', 'Fecha', 'Hora', 'Cliente', 'Estado', 'Tipo', 'Pago', 'Efectivo', 'Transfer', 'Mayo', 'Mayo extra', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total'].join(','),
     ...orders.map(o => {
       const d = new Date(o.created_at)
       return [
+        o.daily_order_number ?? '',
         o.order_number,
         fmtDate(o.created_at),
         d.toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit', hour12: false }),
@@ -25,6 +26,8 @@ export const exportCSV = ({ orders, rangeLabel }) => {
         o.status,
         o.is_delivery ? 'delivery' : o.order_type,
         o.payment_method,
+        Number(o.cash_amount || 0).toFixed(2),
+        Number(o.transfer_amount || 0).toFixed(2),
         o.with_mayo ? 'con' : 'sin',
         Number(o.mayo_extra || 0),
         Number(o.subtotal || 0).toFixed(2),
@@ -58,6 +61,8 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
   const mayoExtraUnits = validForExtras.reduce((s, o) => s + Number(o.mayo_extra || 0), 0)
   const mayoExtraIncome = round2Money(mayoExtraUnits * 0.25)
 
+  const mixtoCount = validForExtras.filter(o => o.payment_method === 'mixto').length
+
   // Hoja 1: Resumen
   const resumen = [
     ['REPORTE CHIKIN88'],
@@ -74,6 +79,7 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
     ['Ticket promedio', kpis.avgTicket],
     ['Efectivo', kpis.cash],
     ['Transferencia', kpis.transfer],
+    ['Pedidos con pago mixto', mixtoCount],
     ['Pedidos cancelados', kpis.cancelled],
     ['Pedidos promo estudiante', kpis.studentCount || 0],
     ['Descuento estudiante total', kpis.studentDiscount || 0],
@@ -83,8 +89,9 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumen), 'Resumen')
 
   // Hoja 2: Pedidos
-  const pedidosHeader = ['Pedido', 'Fecha', 'Cliente', 'Teléfono', 'Estado', 'Tipo', 'Pago', 'Mayo', 'Mayo extra', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total']
+  const pedidosHeader = ['#Diario', '#Global', 'Fecha', 'Cliente', 'Teléfono', 'Estado', 'Tipo', 'Pago', 'Efectivo', 'Transfer', 'Mayo', 'Mayo extra', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total']
   const pedidosRows = orders.map(o => [
+    o.daily_order_number ?? '',
     o.order_number,
     fmtDateTime(o.created_at),
     o.customer_name || '',
@@ -92,6 +99,8 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
     o.status,
     o.is_delivery ? 'delivery' : o.order_type,
     o.payment_method,
+    Number(o.cash_amount || 0),
+    Number(o.transfer_amount || 0),
     o.with_mayo ? 'con' : 'sin',
     Number(o.mayo_extra || 0),
     Number(o.subtotal || 0),
@@ -249,13 +258,15 @@ export const exportPDF = async ({ orders, kpis, top, profit, rangeLabel }) => {
     doc.text('Detalle de pedidos', 14, 18)
     doc.autoTable({
       startY: 22,
-      head: [['#', 'Fecha', 'Cliente', 'Estado', 'Pago', 'Descuento', 'Total']],
+      head: [['#Día', 'Fecha', 'Cliente', 'Estado', 'Pago', 'Descuento', 'Total']],
       body: orders.map(o => [
-        o.order_number,
+        o.daily_order_number ?? o.order_number,
         fmtDateTime(o.created_at),
         o.customer_name || '',
         o.status,
-        o.payment_method,
+        o.payment_method === 'mixto'
+          ? `mixto (${fmtMoney(o.cash_amount || 0)} ef + ${fmtMoney(o.transfer_amount || 0)} tr)`
+          : o.payment_method,
         Number(o.discount_amount || 0) > 0
           ? `${o.discount_type === 'student' ? '🎓 ' : ''}${fmtMoney(o.discount_amount)}`
           : '-',

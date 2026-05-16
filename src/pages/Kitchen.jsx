@@ -2,11 +2,11 @@ import { useEffect, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Clock, Bike, ShoppingBag, Banknote, ArrowRightLeft, ChevronRight,
-  CheckCircle2, XCircle, ChefHat, Flame, RefreshCw, Wifi, WifiOff, Loader2,
+  CheckCircle2, XCircle, ChefHat, Flame, RefreshCw, Wifi, WifiOff, Loader2, Wallet,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useOrderStore } from '../store/orderStore'
-import { ageBucket, minutesSince, money, cx, NEXT_STATUS, STATUS_LABEL, fmtTime, SAUCES } from '../lib/utils'
+import { ageBucket, minutesSince, money, cx, NEXT_STATUS, STATUS_LABEL, fmtTime, SAUCES, displayOrderNumber } from '../lib/utils'
 
 export default function Kitchen() {
   const orders             = useOrderStore(s => s.orders)
@@ -279,15 +279,15 @@ function OrderCard({ order, onAdvance, onCancel }) {
   const advance = async () => {
     try {
       await onAdvance(order.id, next)
-      toast.success(`Pedido #${order.order_number}: ${STATUS_LABEL[next]}`)
+      toast.success(`Pedido ${displayOrderNumber(order)}: ${STATUS_LABEL[next]}`)
     } catch (e) { toast.error('No se pudo actualizar') }
   }
   const cancel = async () => {
-    if (!window.confirm(`¿Cancelar pedido #${order.order_number}?`)) return
+    if (!window.confirm(`¿Cancelar pedido ${displayOrderNumber(order)}?`)) return
     try {
       const reason = window.prompt('Motivo (opcional):') || null
       await onCancel(order.id, reason)
-      toast.success(`Pedido #${order.order_number} cancelado`)
+      toast.success(`Pedido ${displayOrderNumber(order)} cancelado`)
     } catch (e) { toast.error('No se pudo cancelar') }
   }
 
@@ -310,7 +310,7 @@ function OrderCard({ order, onAdvance, onCancel }) {
         {/* Top */}
         <div className="flex items-start justify-between mb-2">
           <div>
-            <div className="font-display text-4xl leading-none">#{order.order_number}</div>
+            <div className="font-display text-4xl leading-none">{displayOrderNumber(order)}</div>
             <div className="font-bold text-base mt-1">{order.customer_name}</div>
             {order.customer_phone && (
               <div className="text-xs text-zinc-500">{order.customer_phone}</div>
@@ -339,9 +339,9 @@ function OrderCard({ order, onAdvance, onCancel }) {
             ? <span className="chip bg-blue-600 text-white"><Bike size={12}/> Delivery</span>
             : <span className="chip bg-zinc-700 text-white"><ShoppingBag size={12}/> {order.order_type === 'abierto' ? 'Abierto' : 'Para llevar'}</span>}
           <span className="chip bg-white text-chikin-black border border-zinc-300">
-            {order.payment_method === 'efectivo'
-              ? <><Banknote size={12}/> Efectivo</>
-              : <><ArrowRightLeft size={12}/> Transfer</>}
+            {order.payment_method === 'efectivo' && <><Banknote size={12}/> Efectivo</>}
+            {order.payment_method === 'transferencia' && <><ArrowRightLeft size={12}/> Transfer</>}
+            {order.payment_method === 'mixto' && <><Wallet size={12}/> Mixto</>}
           </span>
           {!order.with_mayo && <span className="chip bg-rose-500 text-white">SIN mayo</span>}
           {order.with_mayo && Number(order.mayo_extra) > 0 && (

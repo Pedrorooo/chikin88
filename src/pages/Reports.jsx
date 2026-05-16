@@ -20,6 +20,7 @@ import {
   money, fmtDate, fmtTime, cx, STATUS_LABEL,
   todayRange, weekRange, monthRange,
   prevIsoWeek, nextIsoWeek, isoWeekHumanRange,
+  displayOrderNumber,
 } from '../lib/utils'
 import {
   validOrders, groupOrdersByTime, granularityForRange,
@@ -282,7 +283,7 @@ export default function Reports() {
       await softDeleteOrder(order.id, reason, profile?.id)
       // Quitar del estado local de Reportes inmediatamente para que KPIs/charts se actualicen
       setOrders(prev => prev.filter(o => o.id !== order.id))
-      toast.success(`Pedido #${order.order_number} anulado`)
+      toast.success(`Pedido ${displayOrderNumber(order)} anulado`)
       setAnulling(null)
     } catch (err) {
       console.error(err)
@@ -645,7 +646,7 @@ export default function Reports() {
                 <tbody>
                   {orders.map(o => (
                     <tr key={o.id} className="border-t border-zinc-100 dark:border-chikin-gray-700 hover:bg-zinc-50 dark:hover:bg-chikin-gray-800/40">
-                      <td className="px-4 py-2 font-bold">#{o.order_number}</td>
+                      <td className="px-4 py-2 font-bold">{displayOrderNumber(o)}</td>
                       <td className="px-4 py-2 text-xs whitespace-nowrap">{fmtDate(o.created_at)} {fmtTime(o.created_at)}</td>
                       <td className="px-4 py-2">
                         {o.customer_name}
@@ -686,7 +687,7 @@ export default function Reports() {
                 <div key={o.id} className="p-3 hover:bg-zinc-50 dark:hover:bg-chikin-gray-800/40">
                   <div className="flex items-start justify-between mb-1">
                     <div>
-                      <div className="font-display text-lg leading-none">#{o.order_number}</div>
+                      <div className="font-display text-lg leading-none">{displayOrderNumber(o)}</div>
                       <div className="text-[10px] text-zinc-500 mt-0.5">{fmtDate(o.created_at)} · {fmtTime(o.created_at)}</div>
                     </div>
                     <span className={`chip pill-${o.status} text-[10px]`}>{STATUS_LABEL[o.status]}</span>
@@ -842,7 +843,7 @@ function AnularModal({ order, onClose, onConfirm }) {
         {/* Detalles del pedido */}
         <div className="p-4 space-y-3">
           <div className="bg-zinc-50 dark:bg-chikin-gray-800 rounded-xl p-3 space-y-1.5 text-sm">
-            <Row label="Pedido"   value={<span className="font-display text-xl">#{order.order_number}</span>}/>
+            <Row label="Pedido"   value={<span className="font-display text-xl">{displayOrderNumber(order)}</span>}/>
             <Row label="Fecha"    value={`${fmtDate(order.created_at)} · ${fmtTime(order.created_at)}`}/>
             <Row label="Cliente"  value={order.customer_name}/>
             <Row label="Estado"   value={STATUS_LABEL[order.status]}/>

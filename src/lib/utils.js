@@ -264,6 +264,29 @@ export const studentDiscountTotal = (items, isStudent) => {
 }
 
 // ============================================================
+//  Numeración de pedidos
+//
+//  La BD guarda dos números por pedido:
+//    * order_number       → serial global (interno, único, nunca cambia)
+//    * daily_order_number → contador por business_date (#1, #2... cada día)
+//
+//  displayOrderNumber prefiere el daily si existe, y cae al global como
+//  fallback para pedidos creados antes de la migración 012 (no tenían
+//  daily_order_number asignado). De esa manera no se rompe NADA visual
+//  para pedidos viejos.
+// ============================================================
+export const displayOrderNumber = (order) => {
+  if (!order) return ''
+  if (order.daily_order_number != null && order.daily_order_number !== '') {
+    return `#${order.daily_order_number}`
+  }
+  if (order.order_number != null) {
+    return `#${order.order_number}`
+  }
+  return ''
+}
+
+// ============================================================
 //  Helpers de semana ISO (zona Ecuador implícita)
 //
 //  Los strings tienen formato "YYYY-Www" (p.ej. "2026-W20").
