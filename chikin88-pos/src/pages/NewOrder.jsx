@@ -308,17 +308,18 @@ export default function NewOrder() {
 
   const total = round2(productsSubtotal + palillosExtra + deliveryAmount + mayoExtraTotal - studentDiscount)
 
-  const parseMoneyInput = (value) => {
+  const parsePaymentAmount = (value) => {
     if (value == null || value === '') return 0
     const n = Number(String(value).replace(',', '.').replace(/[^\d.-]/g, ''))
-    return Number.isFinite(n) ? round2(n) : 0
+    return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0
   }
+
 
   // ---------- Validación de pago mixto ----------
   // Si paymentMethod es 'mixto', cashAmount + transferAmount debe igualar total.
   // Tolerancia de 1 centavo por floats.
-  const cashNum     = paymentMethod === 'mixto' ? parseMoneyInput(cashAmount) : 0
-  const transferNum = paymentMethod === 'mixto' ? parseMoneyInput(transferAmount) : 0
+  const cashNum     = paymentMethod === 'mixto' ? parsePaymentAmount(cashAmount) : 0
+  const transferNum = paymentMethod === 'mixto' ? parsePaymentAmount(transferAmount) : 0
   const splitSum    = round2(cashNum + transferNum)
   const splitDiff   = round2(total - splitSum)
   // OK si: no es mixto, o cuadra dentro de 1 centavo Y ambos no son cero.
