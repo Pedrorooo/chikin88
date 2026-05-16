@@ -308,7 +308,7 @@ export default function NewOrder() {
 
   const total = round2(productsSubtotal + palillosExtra + deliveryAmount + mayoExtraTotal - studentDiscount)
 
-  const parsePaymentAmount = (value) => {
+  const parseMoneyInput = (value) => {
     if (value == null || value === '') return 0
     const n = Number(String(value).replace(',', '.').replace(/[^\d.-]/g, ''))
     return Number.isFinite(n) ? round2(n) : 0
@@ -317,8 +317,8 @@ export default function NewOrder() {
   // ---------- Validación de pago mixto ----------
   // Si paymentMethod es 'mixto', cashAmount + transferAmount debe igualar total.
   // Tolerancia de 1 centavo por floats.
-  const cashNum     = paymentMethod === 'mixto' ? parsePaymentAmount(cashAmount) : 0
-  const transferNum = paymentMethod === 'mixto' ? parsePaymentAmount(transferAmount) : 0
+  const cashNum     = paymentMethod === 'mixto' ? parseMoneyInput(cashAmount) : 0
+  const transferNum = paymentMethod === 'mixto' ? parseMoneyInput(transferAmount) : 0
   const splitSum    = round2(cashNum + transferNum)
   const splitDiff   = round2(total - splitSum)
   // OK si: no es mixto, o cuadra dentro de 1 centavo Y ambos no son cero.
@@ -431,7 +431,6 @@ export default function NewOrder() {
         payment_method:   paymentMethod,
         cash_amount:      paymentMethod === 'mixto' ? cashNum : 0,
         transfer_amount:  paymentMethod === 'mixto' ? transferNum : 0,
-        // Compatibilidad por si algún store/API lee camelCase.
         cashAmount:       paymentMethod === 'mixto' ? cashNum : 0,
         transferAmount:   paymentMethod === 'mixto' ? transferNum : 0,
         notes:            notes.trim() || null,

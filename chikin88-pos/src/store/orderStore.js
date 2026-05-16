@@ -32,6 +32,18 @@ const RECONNECT_MAX_MS  = 30_000
 
 const FETCH_TIMEOUT_MS = 12_000
 
+const parseMoney = (value) => {
+  if (value == null || value === '') return 0
+  const n = Number(String(value).replace(',', '.').replace(/[^\d.-]/g, ''))
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0
+}
+
+const parseCount = (value) => {
+  if (value == null || value === '') return 0
+  const n = Number(String(value).replace(',', '.').replace(/[^\d.-]/g, ''))
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+}
+
 // Estado a nivel módulo (no reactivo)
 let channel = null
 let reconnectAttempt = 0
@@ -40,38 +52,6 @@ let pollTimer = null
 let lastPollAt = 0
 let lastTodayRefresh = 0
 const TODAY_THROTTLE_MS = 2_000
-
-const parseMoney = (value) => {
-  if (value == null || value === '') return 0
-
-  if (typeof value === 'string') {
-    const normalized = value
-      .replace(',', '.')
-      .replace(/[^\d.-]/g, '')
-
-    const n = Number(normalized)
-    return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0
-  }
-
-  const n = Number(value)
-  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0
-}
-
-const parseCount = (value) => {
-  if (value == null || value === '') return 0
-
-  if (typeof value === 'string') {
-    const normalized = value
-      .replace(',', '.')
-      .replace(/[^\d.-]/g, '')
-
-    const n = Number(normalized)
-    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
-  }
-
-  const n = Number(value)
-  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
-}
 
 export const useOrderStore = create((set, get) => ({
   orders: [],          // pedidos activos
@@ -129,7 +109,7 @@ export const useOrderStore = create((set, get) => ({
       (s, it) => s + (it.subtotal ?? it.unit_price * it.quantity), 0
     )
     const total = orderData.total ?? (
-      subtotal + (orderData.is_delivery ? parseMoney(orderData.delivery_fee || 0) : 0)
+      subtotal + (orderData.is_delivery ? Number(orderData.delivery_fee || 0) : 0)
     )
 
     const payload = {
@@ -141,6 +121,7 @@ export const useOrderStore = create((set, get) => ({
       delivery_fee:     parseMoney(orderData.delivery_fee || 0),
       with_mayo:        orderData.with_mayo !== false,
       mayo_extra:       parseCount(orderData.mayo_extra ?? orderData.mayoExtra ?? 0),
+      mayoExtra:        parseCount(orderData.mayo_extra ?? orderData.mayoExtra ?? 0),
       utensil:          orderData.utensil || 'tenedor',
       payment_method:   orderData.payment_method || 'efectivo',
       cash_amount:      parseMoney(orderData.cash_amount ?? orderData.cashAmount ?? 0),
@@ -148,8 +129,8 @@ export const useOrderStore = create((set, get) => ({
       cashAmount:       parseMoney(orderData.cash_amount ?? orderData.cashAmount ?? 0),
       transferAmount:   parseMoney(orderData.transfer_amount ?? orderData.transferAmount ?? 0),
       notes:            orderData.notes || null,
-      subtotal:         parseMoney(subtotal),
-      total:            parseMoney(total),
+      subtotal,
+      total,
       benefit_type:     orderData.benefit_type || null,
       benefit_employee: orderData.benefit_employee || null,
       client_request_id: orderData.client_request_id || null,
@@ -157,12 +138,12 @@ export const useOrderStore = create((set, get) => ({
         product_id:       it.product_id || null,
         product_name:     it.product_name,
         product_category: it.product_category || null,
-        unit_price:       parseMoney(it.unit_price),
+        unit_price:       Number(it.unit_price),
         quantity:         Number(it.quantity),
         sauces:           it.sauces || [],
         sauce_mode:       it.sauce_mode || 'normal',
         ramen_type:       it.ramen_type || null,
-        subtotal:         parseMoney(it.subtotal ?? (parseMoney(it.unit_price) * Number(it.quantity))),
+        subtotal:         Number(it.subtotal ?? (it.unit_price * it.quantity)),
       })),
     }
 
