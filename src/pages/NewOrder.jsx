@@ -30,6 +30,12 @@ export default function NewOrder() {
   const { profile } = useAuthStore()
   const createOrder = useOrderStore(s => s.createOrder)
 
+  const parseMoneyInput = (value) => {
+    if (value == null || value === '') return 0
+    const n = Number(String(value).replace(',', '.').replace(/[^\d.-]/g, ''))
+    return Number.isFinite(n) ? round2(n) : 0
+  }
+
   const [catalog, setCatalog] = useState(PRODUCTS)
   const [activeCat, setActiveCat] = useState('Principales')
   const [items, setItems] = useState([])
@@ -311,8 +317,8 @@ export default function NewOrder() {
   // ---------- Validación de pago mixto ----------
   // Si paymentMethod es 'mixto', cashAmount + transferAmount debe igualar total.
   // Tolerancia de 1 centavo por floats.
-  const cashNum     = paymentMethod === 'mixto' ? (parseFloat(cashAmount) || 0) : 0
-  const transferNum = paymentMethod === 'mixto' ? (parseFloat(transferAmount) || 0) : 0
+  const cashNum     = paymentMethod === 'mixto' ? parseMoneyInput(cashAmount) : 0
+  const transferNum = paymentMethod === 'mixto' ? parseMoneyInput(transferAmount) : 0
   const splitSum    = round2(cashNum + transferNum)
   const splitDiff   = round2(total - splitSum)
   // OK si: no es mixto, o cuadra dentro de 1 centavo Y ambos no son cero.
@@ -423,8 +429,11 @@ export default function NewOrder() {
         mayo_extra:       mayoExtraCount,
         utensil,
         payment_method:   paymentMethod,
-        cash_amount:      paymentMethod === 'mixto' ? cashNum : null,
-        transfer_amount:  paymentMethod === 'mixto' ? transferNum : null,
+        cash_amount:      paymentMethod === 'mixto' ? cashNum : 0,
+        transfer_amount:  paymentMethod === 'mixto' ? transferNum : 0,
+        // Compatibilidad: algunos normalizadores antiguos leían camelCase.
+        cashAmount:       paymentMethod === 'mixto' ? cashNum : 0,
+        transferAmount:   paymentMethod === 'mixto' ? transferNum : 0,
         notes:            notes.trim() || null,
         created_by:       profile?.id || null,
         status:           'pendiente',

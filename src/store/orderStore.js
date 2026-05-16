@@ -41,6 +41,18 @@ let lastPollAt = 0
 let lastTodayRefresh = 0
 const TODAY_THROTTLE_MS = 2_000
 
+const parseMoneyInput = (value) => {
+  if (value == null || value === '') return 0
+  const n = Number(String(value).replace(',', '.').replace(/[^\d.-]/g, ''))
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0
+}
+
+const parseCountInput = (value) => {
+  if (value == null || value === '') return 0
+  const n = Number(String(value).replace(',', '.').replace(/[^\d.-]/g, ''))
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+}
+
 export const useOrderStore = create((set, get) => ({
   orders: [],          // pedidos activos
   todayOrders: [],     // pedidos del día
@@ -100,19 +112,39 @@ export const useOrderStore = create((set, get) => ({
       subtotal + (orderData.is_delivery ? Number(orderData.delivery_fee || 0) : 0)
     )
 
+    const paymentMethod = orderData.payment_method || 'efectivo'
+    const cashAmount = parseMoneyInput(orderData.cash_amount ?? orderData.cashAmount ?? 0)
+    const transferAmount = parseMoneyInput(orderData.transfer_amount ?? orderData.transferAmount ?? 0)
+    const finalCashAmount = paymentMethod === 'mixto'
+      ? cashAmount
+      : paymentMethod === 'efectivo'
+        ? parseMoneyInput(total)
+        : 0
+    const finalTransferAmount = paymentMethod === 'mixto'
+      ? transferAmount
+      : paymentMethod === 'transferencia'
+        ? parseMoneyInput(total)
+        : 0
+
     const payload = {
       customer_name:    orderData.customer_name,
       customer_phone:   orderData.customer_phone || null,
       status:           orderData.status || 'pendiente',
       order_type:       orderData.order_type || 'para_llevar',
       is_delivery:      !!orderData.is_delivery,
-      delivery_fee:     Number(orderData.delivery_fee || 0),
+      delivery_fee:     parseMoneyInput(orderData.delivery_fee || 0),
       with_mayo:        orderData.with_mayo !== false,
+      mayo_extra:       parseCountInput(orderData.mayo_extra ?? orderData.mayoExtra ?? 0),
       utensil:          orderData.utensil || 'tenedor',
-      payment_method:   orderData.payment_method || 'efectivo',
+      payment_method:   paymentMethod,
+      cash_amount:      finalCashAmount,
+      transfer_amount:  finalTransferAmount,
+      // Compatibilidad por si otro normalizador lee camelCase.
+      cashAmount:       finalCashAmount,
+      transferAmount:   finalTransferAmount,
       notes:            orderData.notes || null,
-      subtotal,
-      total,
+      subtotal:         parseMoneyInput(subtotal),
+      total:            parseMoneyInput(total),
       benefit_type:     orderData.benefit_type || null,
       benefit_employee: orderData.benefit_employee || null,
       client_request_id: orderData.client_request_id || null,
