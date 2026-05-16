@@ -40,6 +40,38 @@ export const config = { runtime: 'nodejs' }
 // La idempotencia permite al cliente reintentar sin duplicar.
 const RPC_TIMEOUT_MS = 9_000
 
+const parseMoney = (value) => {
+  if (value == null || value === '') return 0
+
+  if (typeof value === 'string') {
+    const normalized = value
+      .replace(',', '.')
+      .replace(/[^\d.-]/g, '')
+
+    const n = Number(normalized)
+    return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0
+  }
+
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0
+}
+
+const parseCount = (value) => {
+  if (value == null || value === '') return 0
+
+  if (typeof value === 'string') {
+    const normalized = value
+      .replace(',', '.')
+      .replace(/[^\d.-]/g, '')
+
+    const n = Number(normalized)
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+  }
+
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0
+}
+
 export default async function handler(req, res) {
   // Headers anti-caché: jamás queremos que un proxy/CDN/navegador
   // cachee la respuesta de crear pedido.
@@ -123,18 +155,21 @@ export default async function handler(req, res) {
 
     // ----- 5. Validar payload -----
     const body = req.body || {}
+
     if (!body.customer_name || !String(body.customer_name).trim()) {
       return res.status(400).json({
         success: false,
         error: 'Falta nombre del cliente.',
       })
     }
+
     if (!Array.isArray(body.items) || body.items.length === 0) {
       return res.status(400).json({
         success: false,
         error: 'El pedido no tiene productos.',
       })
     }
+
     for (const it of body.items) {
       if (!it.product_name || it.unit_price == null || !it.quantity) {
         return res.status(400).json({
@@ -147,39 +182,49 @@ export default async function handler(req, res) {
     // ----- 6. Construir payload final -----
     // created_by SIEMPRE viene del JWT, nunca del body.
     const payload = {
-      customer_name:    String(body.customer_name).trim(),
-      customer_phone:   body.customer_phone || null,
-      status:           body.status || 'pendiente',
-      order_type:       body.order_type || 'para_llevar',
-      is_delivery:      !!body.is_delivery,
-      delivery_fee:     Number(body.delivery_fee || 0),
-      with_mayo:        body.with_mayo !== false,
-      utensil:          body.utensil || 'tenedor',
-      payment_method:   body.payment_method || 'efectivo',
-      notes:            body.notes || null,
-      subtotal:         Number(body.subtotal || 0),
-      total:            Number(body.total || 0),
-      created_by:       userId,            // ← derivado del JWT
-      benefit_type:     body.benefit_type || null,
+      customer_name: String(body.customer_name).trim(),
+      customer_phone: body.customer_phone || null,
+      status: body.status || 'pendiente',
+      order_type: body.order_type || 'para_llevar',
+      is_delivery: !!body.is_delivery,
+      delivery_fee: parseMoney(body.delivery_fee || 0),
+      with_mayo: body.with_mayo !== false,
+      mayo_extra: parseCount(body.mayo_extra ?? body.mayoExtra ?? 0),
+      utensil: body.utensil || 'tenedor',
+      payment_method: body.payment_method || 'efectivo',
+
+      // Campos necesarios para pago mixto.
+      // Acepta snake_case y camelCase por compatibilidad.
+      cash_amount: parseMoney(body.cash_amount ?? body.cashAmount ?? 0),
+      transfer_amount: parseMoney(body.transfer_amount ?? body.transferAmount ?? 0),
+
+      notes: body.notes || null,
+      subtotal: parseMoney(body.subtotal || 0),
+      total: parseMoney(body.total || 0),
+      created_by: userId,
+      benefit_type: body.benefit_type || null,
       benefit_employee: body.benefit_employee || null,
       client_request_id: body.client_request_id || null,
+
       items: body.items.map(it => ({
-        product_id:       it.product_id || null,
-        product_name:     String(it.product_name),
+        product_id: it.product_id || null,
+        product_name: String(it.product_name),
         product_category: it.product_category || null,
-        unit_price:       Number(it.unit_price),
-        quantity:         Number(it.quantity),
-        sauces:           Array.isArray(it.sauces) ? it.sauces : [],
-        sauce_mode:       it.sauce_mode || 'normal',
-        ramen_type:       it.ramen_type || null,
-        subtotal:         Number(it.subtotal ?? (it.unit_price * it.quantity)),
+        unit_price: parseMoney(it.unit_price),
+        quantity: Number(it.quantity),
+        sauces: Array.isArray(it.sauces) ? it.sauces : [],
+        sauce_mode: it.sauce_mode || 'normal',
+        ramen_type: it.ramen_type || null,
+        subtotal: parseMoney(it.subtotal ?? (parseMoney(it.unit_price) * Number(it.quantity))),
       })),
     }
 
     // ----- 7. Llamar al RPC con timeout duro -----
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS)
+
     let rpcRes
+
     try {
       rpcRes = await supaSrv
         .rpc('create_order_with_items', { payload })
@@ -191,18 +236,22 @@ export default async function handler(req, res) {
           error: 'El servidor tardó demasiado. Pulsa reintentar.',
         })
       }
+
       throw err
     } finally {
       clearTimeout(timer)
     }
 
     if (rpcRes.error) {
-      // Errores de negocio del trigger (beneficios duplicados, etc.)
+      // Errores de negocio del trigger/RPC:
+      // beneficios duplicados, pago mixto descuadrado, etc.
       const msg = rpcRes.error.message || rpcRes.error.details || 'Error del servidor'
-      // Códigos P0001-P0003 vienen del trigger handle_benefit_order
-      const isBenefitError = /ya usó su|no es un empleado/i.test(msg) ||
-                             ['P0001', 'P0002', 'P0003'].includes(rpcRes.error.code)
-      return res.status(isBenefitError ? 422 : 500).json({
+
+      const isBusinessError =
+        /ya usó su|no es un empleado|PAYMENT_SPLIT_MISMATCH/i.test(msg) ||
+        ['P0001', 'P0002', 'P0003'].includes(rpcRes.error.code)
+
+      return res.status(isBusinessError ? 422 : 500).json({
         success: false,
         error: msg.replace(/^ERROR:\s*/i, '').trim(),
       })
@@ -218,6 +267,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, order: rpcRes.data })
   } catch (err) {
     console.error('[create-order] error inesperado:', err)
+
     return res.status(500).json({
       success: false,
       error: err?.message || 'Error inesperado del servidor.',
