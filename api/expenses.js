@@ -2,7 +2,7 @@
 // GET           → lista gastos (admin)
 // POST          → crea gasto (admin)
 // DELETE ?id=X  → borra gasto (admin)
-import { withAuth } from './_lib/auth.js'
+import { withAuth } from '../server/auth.js'
 
 export default withAuth(async (req, res, { supaSrv, userId }) => {
   // ===== GET =====

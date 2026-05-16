@@ -1,7 +1,7 @@
 // PATCH /api/order-restore
 // Body: { id }
 // Admin only.
-import { withAuth } from './_lib/auth.js'
+import { withAuth } from '../server/auth.js'
 
 export default withAuth(async (req, res, { supaSrv }) => {
   if (req.method !== 'PATCH' && req.method !== 'POST') {

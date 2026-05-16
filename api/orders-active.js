@@ -1,6 +1,6 @@
 // GET /api/orders-active
 // Pedidos activos: pendiente, en_preparacion, listo (excluye anulados)
-import { withAuth } from './_lib/auth.js'
+import { withAuth } from '../server/auth.js'
 
 export default withAuth(async (req, res, { supaSrv }) => {
   if (req.method !== 'GET') {

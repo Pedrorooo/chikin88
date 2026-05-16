@@ -1,6 +1,6 @@
 // GET /api/anulados?range=today|week|month|all
 // Pedidos anulados (admin only). Incluye nombre del admin que anuló.
-import { withAuth } from './_lib/auth.js'
+import { withAuth } from '../server/auth.js'
 
 export default withAuth(async (req, res, { supaSrv }) => {
   if (req.method !== 'GET') {

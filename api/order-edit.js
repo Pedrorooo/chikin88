@@ -1,7 +1,7 @@
 // PATCH /api/order-edit
 // Body: { id, patch: { ...fields } }
 // Para editar campos de un pedido activo (nombre, notas, mayo, etc.).
-import { withAuth } from './_lib/auth.js'
+import { withAuth } from '../server/auth.js'
 
 // Whitelist de campos editables (defensa contra mass-assignment)
 const EDITABLE_FIELDS = new Set([

@@ -1,6 +1,6 @@
 // GET /api/dashboard?range=today|week|month
 // Métricas agregadas. Admin only.
-import { withAuth } from './_lib/auth.js'
+import { withAuth } from '../server/auth.js'
 
 // Helpers de rango (replica de utils.js del frontend para tenerlos server-side)
 function todayRange() {

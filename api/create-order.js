@@ -32,7 +32,7 @@
 //    { success: boolean, order?: object, error?: string }
 // =====================================================================
 import { createClient } from '@supabase/supabase-js'
-import { setNoCacheHeaders } from './_lib/auth.js'
+import { setNoCacheHeaders } from '../server/auth.js'
 
 export const config = { runtime: 'nodejs' }
 

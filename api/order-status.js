@@ -1,7 +1,7 @@
 // PATCH /api/order-status
 // Body: { id, status, cancel_reason? }
 // status: pendiente | en_preparacion | listo | entregado | cancelado
-import { withAuth } from './_lib/auth.js'
+import { withAuth } from '../server/auth.js'
 
 const VALID_STATUSES = ['pendiente', 'en_preparacion', 'listo', 'entregado', 'cancelado']
 

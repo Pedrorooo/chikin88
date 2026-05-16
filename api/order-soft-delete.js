@@ -1,7 +1,7 @@
 // PATCH /api/order-soft-delete
 // Body: { id, reason? }
 // Admin only.
-import { withAuth } from './_lib/auth.js'
+import { withAuth } from '../server/auth.js'
 
 export default withAuth(async (req, res, { supaSrv, userId }) => {
   if (req.method !== 'PATCH' && req.method !== 'POST') {

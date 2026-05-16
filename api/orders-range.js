@@ -10,7 +10,7 @@
 //                       por el límite de 12 Serverless Functions en Vercel
 //                       Hobby. La lógica es la misma; solo viaja en el
 //                       mismo round-trip que el reporte principal.
-import { withAuth } from './_lib/auth.js'
+import { withAuth } from '../server/auth.js'
 
 // "Hoy" en zona América/Guayaquil (YYYY-MM-DD)
 function todayInEcuador() {

@@ -1,6 +1,6 @@
 // GET /api/orders-today
 // Todos los pedidos del día (excluye anulados)
-import { withAuth } from './_lib/auth.js'
+import { withAuth } from '../server/auth.js'
 
 export default withAuth(async (req, res, { supaSrv }) => {
   if (req.method !== 'GET') {
