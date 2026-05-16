@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html, body, #root { height: 100%; }
+  body {
+    @apply font-sans bg-zinc-50 text-zinc-900 antialiased;
+    overscroll-behavior: none;
+  }
+  body.dark {
+    @apply bg-chikin-black text-zinc-100;
+  }
+  /* Tipografía display */
+  .font-display { letter-spacing: 0.02em; }
+
+  /* Scroll suave en touch */
+  * { -webkit-overflow-scrolling: touch; }
+
+  /* Inputs grandes + accesibles para POS táctil */
+  input, select, textarea, button {
+    font-family: inherit;
+  }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 font-semibold rounded-xl
+           px-4 py-3 transition-all duration-150 active:scale-[0.97] select-none
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-lg { @apply px-6 py-4 text-lg rounded-2xl; }
+  .btn-xl { @apply px-8 py-5 text-xl rounded-2xl; }
+
+  .btn-primary {
+    @apply btn bg-chikin-red text-white shadow-lg shadow-chikin-red/30
+           hover:bg-chikin-red-dark;
+  }
+  .btn-yellow {
+    @apply btn bg-chikin-yellow text-chikin-black shadow-lg shadow-chikin-yellow/40
+           hover:bg-chikin-yellow-dark;
+  }
+  .btn-dark {
+    @apply btn bg-chikin-black text-white hover:bg-chikin-gray-800;
+  }
+  .btn-outline {
+    @apply btn bg-white border-2 border-zinc-200 text-zinc-800
+           hover:border-chikin-red hover:text-chikin-red;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-zinc-600 hover:bg-zinc-100;
+  }
+
+  .card {
+    @apply bg-white rounded-2xl border border-zinc-200 shadow-sm;
+  }
+  .dark .card {
+    @apply bg-chikin-gray-900 border-chikin-gray-700;
+  }
+
+  .input {
+    @apply w-full rounded-xl border-2 border-zinc-200 bg-white px-4 py-3
+           text-base focus:outline-none focus:border-chikin-red transition;
+  }
+  .dark .input {
+    @apply bg-chikin-gray-800 border-chikin-gray-700 text-white
+           focus:border-chikin-yellow;
+  }
+
+  .label {
+    @apply block text-sm font-semibold text-zinc-700 mb-1.5;
+  }
+  .dark .label { @apply text-zinc-300; }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold;
+  }
+
+  /* Pills de estado del pedido */
+  .pill-pendiente       { @apply bg-zinc-200 text-zinc-800; }
+  .pill-en_preparacion  { @apply bg-blue-100 text-blue-800; }
+  .pill-listo           { @apply bg-emerald-100 text-emerald-800; }
+  .pill-entregado       { @apply bg-zinc-100 text-zinc-500; }
+  .pill-cancelado       { @apply bg-rose-100 text-rose-800; }
+
+  /* Tarjetas de cocina por tiempo */
+  .order-fresh  { @apply bg-emerald-50 border-emerald-500; }
+  .order-warn   { @apply bg-yellow-50  border-yellow-500; }
+  .order-late   { @apply bg-orange-100 border-orange-500; }
+  .order-urgent { @apply bg-rose-100   border-rose-600 animate-pulse-urgent; }
+
+  .dark .order-fresh  { @apply bg-emerald-950/50 border-emerald-500; }
+  .dark .order-warn   { @apply bg-yellow-950/40  border-yellow-500; }
+  .dark .order-late   { @apply bg-orange-950/50  border-orange-500; }
+  .dark .order-urgent { @apply bg-rose-950/60    border-rose-500;   }
+
+  /* Header del POS */
+  .brand-mark {
+    @apply font-display text-2xl tracking-wide;
+  }
+}
+
+/* Patrón de fondo sutil */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(0,0,0,0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0,0,0,0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+.dark .bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
+}
+
+/* Scrollbar bonito */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 999px; }
+.dark ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); }
