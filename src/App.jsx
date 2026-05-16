@@ -13,7 +13,6 @@ import Login from './pages/Login'
 import Orders from './pages/Orders'
 import NewOrder from './pages/NewOrder'
 import Kitchen from './pages/Kitchen'
-import Dashboard from './pages/Dashboard'
 import Expenses from './pages/Expenses'
 import Reports from './pages/Reports'
 import AnulledOrders from './pages/AnulledOrders'
@@ -112,7 +111,7 @@ export default function App() {
         <Route path="/pedidos"   element={<Orders />} />
         <Route path="/nuevo"     element={<ProtectedRoute roles={['admin','empleado']}><NewOrder /></ProtectedRoute>} />
         <Route path="/cocina"    element={<ProtectedRoute roles={['admin','empleado']}><Kitchen /></ProtectedRoute>} />
-        <Route path="/dashboard" element={<ProtectedRoute roles={['admin']}><Dashboard /></ProtectedRoute>} />
+        <Route path="/dashboard" element={<Navigate to="/reportes" replace />} />
         <Route path="/gastos"    element={<ProtectedRoute roles={['admin']}><Expenses /></ProtectedRoute>} />
         <Route path="/reportes"  element={<ProtectedRoute roles={['admin']}><Reports /></ProtectedRoute>} />
         <Route path="/anulados"  element={<ProtectedRoute roles={['admin']}><AnulledOrders /></ProtectedRoute>} />

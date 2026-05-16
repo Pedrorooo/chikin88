@@ -66,17 +66,19 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
     [],
     ['KPI', 'Valor'],
     ['Pedidos válidos', kpis.orderCount],
-    ['Ingresos', kpis.revenue],
+    ['Ingresos brutos', kpis.revenue],
+    ['Delivery pagado', kpis.deliveryPaid || 0],
+    ['Ingresos netos de venta', (kpis.netRevenue ?? (kpis.revenue - (kpis.deliveryPaid || 0)))],
     ['Gastos', kpis.expenses],
     ['Ganancia neta', kpis.profit],
     ['Ticket promedio', kpis.avgTicket],
+    ['Efectivo', kpis.cash],
+    ['Transferencia', kpis.transfer],
     ['Pedidos cancelados', kpis.cancelled],
     ['Pedidos promo estudiante', kpis.studentCount || 0],
     ['Descuento estudiante total', kpis.studentDiscount || 0],
     ['Mayonesa extra (unidades)', mayoExtraUnits],
     ['Mayonesa extra (ingresos)', mayoExtraIncome],
-    ['Efectivo', kpis.cash],
-    ['Transferencia', kpis.transfer],
   ]
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumen), 'Resumen')
 
@@ -120,8 +122,13 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
   }
 
   // Hoja 6: Gastos
-  const gastosHeader = ['Fecha', 'Descripción', 'Monto']
-  const gastosRows = (expenses || []).map(e => [e.expense_date, e.description, Number(e.amount || 0)])
+  const gastosHeader = ['Fecha', 'Categoría', 'Descripción', 'Monto']
+  const gastosRows = (expenses || []).map(e => [
+    e.expense_date,
+    e.category || 'general',
+    e.description,
+    Number(e.amount || 0),
+  ])
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([gastosHeader, ...gastosRows]), 'Gastos')
 
   XLSX.writeFile(wb, `chikin88-${rangeLabel}-${new Date().toISOString().slice(0, 10)}.xlsx`)

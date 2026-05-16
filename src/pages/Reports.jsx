@@ -5,6 +5,7 @@ import {
   FileSpreadsheet, FileDown, ShoppingBag, DollarSign, Wallet, Target,
   RefreshCw, Trash2, X, AlertTriangle, Loader2, RotateCw,
   Banknote, ArrowRightLeft, GraduationCap,
+  Bike, Users, Crown, Check, Clock as Clock4,
 } from 'lucide-react'
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar,
@@ -21,7 +22,7 @@ import {
 import {
   validOrders, groupOrdersByTime, granularityForRange,
   topProducts, monthlySalesForYear, annualComparison,
-  monthlyProfit, computeKpis,
+  monthlyProfit, computeKpis, buildBenefitsView,
 } from '../lib/reportAggregations'
 import { exportCSV, exportExcel, exportPDF } from '../lib/exports'
 
@@ -72,6 +73,9 @@ export default function Reports() {
   const [expenses, setExpenses] = useState([])
   const [prevYearOrders, setPrevYearOrders] = useState([])
   const [yearExpenses, setYearExpenses] = useState([])
+  // Beneficios semanales (cuadro de empleados y dueños). Endpoint dedicado
+  // /api/benefits-week que solo lee; no afecta a los reportes principales.
+  const [benefits, setBenefits] = useState(null)  // { today, isoWeek, employees, usages }
 
   // Estados de carga (inicia loading=true para no mostrar 0s falsos)
   const [loading, setLoading] = useState(true)
@@ -132,7 +136,33 @@ export default function Reports() {
     return () => { cancelled = true }
   }, [currentRange])
 
-  // ----- Cargar datos extra para comparativas anuales -----
+  // ----- Cargar beneficios de la semana actual (cuadro de empleados/dueños) -----
+  // No depende del rango: siempre muestra la semana ISO actual en Ecuador.
+  // Si el endpoint falla, simplemente no se muestra el cuadro; el resto del
+  // reporte sigue funcionando.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const { data, error } = await apiFetch('/api/benefits-week', {}, 10_000)
+      if (cancelled) return
+      if (!error && data?.success) setBenefits(data)
+    })()
+    return () => { cancelled = true }
+  }, [refreshKey])
+
+  // Vista derivada de los beneficios. orders se pasa para resolver order_number
+  // a partir del order_id guardado en employee_benefit_usage.
+  const benefitsView = useMemo(() => {
+    if (!benefits) return null
+    return buildBenefitsView({
+      employees: benefits.employees,
+      usages:    benefits.usages,
+      orders:    orders,
+      today:     benefits.today,
+      isoWeek:   benefits.isoWeek,
+    })
+  }, [benefits, orders])
+
   useEffect(() => {
     if (mode !== 'year') {
       setPrevYearOrders([])
@@ -308,14 +338,72 @@ export default function Reports() {
         onFrom={setCustomFrom} onTo={setCustomTo}
       />
 
-      {/* ===== KPIs ===== */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 mb-6">
+      {/* ===== KPIs principales ===== */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-3">
         <Stat icon={ShoppingBag} label="Pedidos"       value={kpis.orderCount} />
-        <Stat icon={DollarSign}  label="Ingresos"      value={money(kpis.revenue)} accent="red"/>
+        <Stat icon={DollarSign}  label="Ingresos brutos" value={money(kpis.revenue)} accent="red"/>
+        <Stat icon={Bike}        label="Delivery pagado" value={money(kpis.deliveryPaid)} accent="blue"/>
         <Stat icon={Wallet}      label="Gastos"        value={money(kpis.expenses)} accent="rose"/>
         <Stat icon={TrendingUp}  label="Ganancia neta" value={money(kpis.profit)}
               accent={kpis.profit >= 0 ? 'emerald' : 'rose'}/>
         <Stat icon={Target}      label="Ticket prom."  value={money(kpis.avgTicket)} accent="yellow"/>
+      </div>
+
+      {/* ===== Detalle de pagos + fórmula de ganancia ===== */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+        <div className="card p-4">
+          <div className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 mb-2">
+            Pagos recibidos
+          </div>
+          <div className="space-y-1.5 text-sm">
+            <div className="flex justify-between">
+              <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-200">
+                <Banknote size={14}/> Efectivo
+              </span>
+              <span className="font-bold">{money(kpis.cash)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-200">
+                <ArrowRightLeft size={14}/> Transferencia
+              </span>
+              <span className="font-bold">{money(kpis.transfer)}</span>
+            </div>
+            <div className="flex justify-between pt-1.5 mt-1 border-t border-zinc-200 dark:border-chikin-gray-700">
+              <span className="font-bold">Total ingresos</span>
+              <span className="font-display text-base text-chikin-red">{money(kpis.revenue)}</span>
+            </div>
+          </div>
+        </div>
+        <div className="card p-4">
+          <div className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 mb-2">
+            Cálculo de ganancia neta
+          </div>
+          <div className="space-y-1.5 text-sm">
+            <div className="flex justify-between">
+              <span className="text-zinc-700 dark:text-zinc-200">Ingresos brutos</span>
+              <span>{money(kpis.revenue)}</span>
+            </div>
+            <div className="flex justify-between text-blue-600">
+              <span>− Delivery pagado</span>
+              <span>−{money(kpis.deliveryPaid)}</span>
+            </div>
+            <div className="flex justify-between text-zinc-600 dark:text-zinc-300">
+              <span>= Ingresos netos de venta</span>
+              <span>{money(kpis.netRevenue)}</span>
+            </div>
+            <div className="flex justify-between text-rose-600">
+              <span>− Gastos</span>
+              <span>−{money(kpis.expenses)}</span>
+            </div>
+            <div className="flex justify-between pt-1.5 mt-1 border-t border-zinc-200 dark:border-chikin-gray-700">
+              <span className="font-bold">= Ganancia neta</span>
+              <span className={cx(
+                'font-display text-base',
+                kpis.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'
+              )}>{money(kpis.profit)}</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* ===== Tarjeta info: Promo estudiante (solo si hubo) ===== */}
@@ -335,6 +423,20 @@ export default function Reports() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ===== Cuadros de beneficios semanales (empleados y dueños) =====
+            Lectura desde /api/benefits-week. Si el endpoint falla o todavía
+            está cargando, simplemente no se renderiza nada. */}
+      {benefitsView && (benefitsView.employeesView.length > 0 || benefitsView.ownersView.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+          {benefitsView.employeesView.length > 0 && (
+            <BenefitsEmployeeCard view={benefitsView.employeesView} isoWeek={benefits.isoWeek}/>
+          )}
+          {benefitsView.ownersView.length > 0 && (
+            <BenefitsOwnerCard view={benefitsView.ownersView} isoWeek={benefits.isoWeek}/>
+          )}
         </div>
       )}
 
@@ -429,19 +531,41 @@ export default function Reports() {
         </>
       )}
 
-      {/* ===== Top productos ===== */}
-      <ChartCard title="Productos más vendidos" icon={ShoppingBag} subtitle="Top 10 por cantidad">
+      {/* ===== Top productos: gráfico + tabla con cantidad y monto ===== */}
+      <ChartCard title="Productos más vendidos" icon={ShoppingBag} subtitle="Top 10 por cantidad e ingresos">
         {top.length === 0 ? <Empty/> : (
-          <ResponsiveContainer width="100%" height={Math.max(280, top.length * 38)}>
-            <BarChart data={top} layout="vertical" margin={{ top: 10, right: 24, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)"/>
-              <XAxis type="number" tick={{ fontSize: 11 }} stroke={C_GRAY}/>
-              <YAxis type="category" dataKey="name" width={130}
-                     tick={{ fontSize: 11 }} stroke={C_GRAY} interval={0}/>
-              <Tooltip content={<CustomTooltip moneyFields={['revenue']} />}/>
-              <Bar dataKey="qty" name="Cantidad" fill={C_YELLOW} radius={[0, 6, 6, 0]}/>
-            </BarChart>
-          </ResponsiveContainer>
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4">
+            <ResponsiveContainer width="100%" height={Math.max(280, top.length * 38)}>
+              <BarChart data={top} layout="vertical" margin={{ top: 10, right: 24, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)"/>
+                <XAxis type="number" tick={{ fontSize: 11 }} stroke={C_GRAY}/>
+                <YAxis type="category" dataKey="name" width={130}
+                       tick={{ fontSize: 11 }} stroke={C_GRAY} interval={0}/>
+                <Tooltip content={<CustomTooltip moneyFields={['revenue']} />}/>
+                <Bar dataKey="qty" name="Cantidad" fill={C_YELLOW} radius={[0, 6, 6, 0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+            <div className="overflow-x-auto lg:min-w-[280px]">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wider text-zinc-500">
+                    <th className="text-left py-1.5 pr-3">Producto</th>
+                    <th className="text-right py-1.5 px-2">Cant.</th>
+                    <th className="text-right py-1.5 pl-2">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {top.map(p => (
+                    <tr key={p.name} className="border-t border-zinc-100 dark:border-chikin-gray-700">
+                      <td className="py-1.5 pr-3 truncate max-w-[180px]">{p.name}</td>
+                      <td className="py-1.5 px-2 text-right font-bold">{p.qty}</td>
+                      <td className="py-1.5 pl-2 text-right font-bold text-chikin-red">{money(p.revenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
       </ChartCard>
 
@@ -823,6 +947,7 @@ function Stat({ icon: Icon, label, value, accent }) {
     yellow:  'text-amber-600 dark:text-chikin-yellow',
     rose:    'text-rose-600',
     emerald: 'text-emerald-600',
+    blue:    'text-blue-600',
   }
   return (
     <motion.div className="card p-4 hover:shadow-md transition"
@@ -882,5 +1007,128 @@ function CustomTooltip({ active, payload, label, moneyFields = [] }) {
         )
       })}
     </div>
+  )
+}
+
+// ============================================================
+//  BenefitsEmployeeCard — empleados normales y su semana
+//
+//  Para cada empleado muestra:
+//    * si usó descuento diario HOY (chip "Usado hoy" / "Disponible hoy")
+//    * cuántos descuentos lleva en la semana (informativo)
+//    * si usó cortesía semanal (chip "Cortesía usada" con día/hora y #pedido,
+//      o "Cortesía disponible")
+// ============================================================
+function BenefitsEmployeeCard({ view, isoWeek }) {
+  return (
+    <motion.div className="card p-4"
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+      <div className="flex items-center gap-2 mb-3">
+        <Users size={18} className="text-chikin-red"/>
+        <h3 className="font-bold text-base">Beneficios empleados</h3>
+        <span className="ml-auto text-[10px] text-zinc-400 uppercase tracking-wider">{isoWeek}</span>
+      </div>
+      <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+        {view.map(e => (
+          <div key={e.username}
+               className="flex items-center gap-2 p-2 rounded-lg bg-zinc-50 dark:bg-chikin-gray-800 border border-zinc-100 dark:border-chikin-gray-700">
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-sm truncate">{e.displayName}</div>
+              <div className="text-[10px] text-zinc-400">
+                Descuentos esta semana: <span className="font-bold text-zinc-600 dark:text-zinc-300">{e.discountsWeek}</span>
+              </div>
+            </div>
+            <div className="flex flex-col items-end gap-1">
+              {/* Descuento diario */}
+              {e.discountsToday > 0 ? (
+                <span className="chip bg-chikin-yellow text-chikin-black text-[9px] font-extrabold">
+                  <Check size={10}/> Hoy
+                </span>
+              ) : (
+                <span className="chip bg-zinc-200 dark:bg-chikin-gray-700 text-zinc-500 text-[9px] font-extrabold">
+                  Hoy disp.
+                </span>
+              )}
+              {/* Cortesía semanal */}
+              {e.courtesyWeek ? (
+                <span
+                  className="chip bg-emerald-600 text-white text-[9px] font-extrabold"
+                  title={`${fmtTime(e.courtesyAt) || ''}${e.courtesyOrderNumber ? ' · #' + e.courtesyOrderNumber : ''}`}
+                >
+                  🎁 {fmtTime(e.courtesyAt) || 'Usada'}
+                  {e.courtesyOrderNumber && (
+                    <span className="ml-1">#{e.courtesyOrderNumber}</span>
+                  )}
+                </span>
+              ) : (
+                <span className="chip bg-zinc-200 dark:bg-chikin-gray-700 text-zinc-500 text-[9px] font-extrabold">
+                  🎁 Pendiente
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  )
+}
+
+// ============================================================
+//  BenefitsOwnerCard — dueños (Cindy88, Daivid88, Stephano88)
+//
+//  Sin límites. Muestra totales de la semana y los últimos 5 usos
+//  con día/hora y número de pedido (si está disponible).
+// ============================================================
+function BenefitsOwnerCard({ view, isoWeek }) {
+  return (
+    <motion.div className="card p-4 bg-amber-50/40 dark:bg-amber-950/10 border-amber-200 dark:border-amber-900/40"
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+      <div className="flex items-center gap-2 mb-3">
+        <Crown size={18} className="text-amber-600"/>
+        <h3 className="font-bold text-base">Dueños (sin límite)</h3>
+        <span className="ml-auto text-[10px] text-zinc-400 uppercase tracking-wider">{isoWeek}</span>
+      </div>
+      <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+        {view.map(o => (
+          <div key={o.username}
+               className="p-2.5 rounded-lg bg-white dark:bg-chikin-gray-800 border border-amber-200/60 dark:border-amber-900/40">
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-sm truncate">{o.displayName}</div>
+              </div>
+              <div className="flex gap-1.5">
+                <span className="chip bg-chikin-yellow text-chikin-black text-[9px] font-extrabold">
+                  ⭐ {o.discountsWeek}
+                </span>
+                <span className="chip bg-emerald-600 text-white text-[9px] font-extrabold">
+                  🎁 {o.courtesiesWeek}
+                </span>
+              </div>
+            </div>
+            {o.lastUses.length > 0 && (
+              <div className="mt-1.5 space-y-0.5">
+                {o.lastUses.map((u, i) => (
+                  <div key={i} className="text-[10px] text-zinc-500 flex items-center gap-1.5">
+                    <Clock4 size={10}/>
+                    <span className="font-bold">
+                      {u.type === 'discount' ? '⭐' : '🎁'}
+                    </span>
+                    <span>{fmtTime(u.at) || '—'}</span>
+                    {u.orderNumber && (
+                      <span className="text-zinc-400">· #{u.orderNumber}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {o.lastUses.length === 0 && (
+              <div className="mt-1 text-[10px] text-zinc-400 italic">
+                Sin usos esta semana
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </motion.div>
   )
 }

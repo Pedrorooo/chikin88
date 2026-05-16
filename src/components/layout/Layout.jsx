@@ -1,7 +1,7 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import {
-  ListOrdered, PlusCircle, ChefHat, BarChart3,
+  ListOrdered, PlusCircle, ChefHat,
   Receipt, FileText, LogOut, Moon, Sun, Menu, X, ArchiveX,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -31,7 +31,6 @@ export default function Layout() {
     { to: '/pedidos',   icon: ListOrdered, label: 'Pedidos',   show: true },
     { to: '/nuevo',     icon: PlusCircle,  label: 'Nuevo',     show: isAdmin || isEmployee },
     { to: '/cocina',    icon: ChefHat,     label: 'Cocina',    show: isAdmin || isEmployee },
-    { to: '/dashboard', icon: BarChart3,   label: 'Dashboard', show: isAdmin },
     { to: '/gastos',    icon: Receipt,     label: 'Gastos',    show: isAdmin },
     { to: '/reportes',  icon: FileText,    label: 'Reportes',  show: isAdmin },
     { to: '/anulados',  icon: ArchiveX,    label: 'Anulados',  show: isAdmin },
