@@ -113,12 +113,34 @@ Cantidad | Ingresos`.
 
 ### 6. Cuadro semanal de beneficios — Empleados normales
 
-**Endpoint nuevo:** `GET /api/benefits-week` (solo admin)
+**Endpoint consolidado:** la lógica vive dentro de `GET /api/orders-range`
+con query param `?includeBenefits=1`. Se decidió consolidar (en lugar de
+crear `/api/benefits-week`) para respetar el límite de **12 Serverless
+Functions del plan Hobby de Vercel**. Reports.jsx llama una sola vez al
+endpoint y recibe pedidos + beneficios en la misma respuesta — un round-trip
+menos por carga.
+
+La respuesta consolidada:
+```json
+{
+  "success": true,
+  "orders": [...],
+  "benefits": {
+    "today": "YYYY-MM-DD",
+    "isoWeek": "YYYY-Www",
+    "employees": [...],
+    "usages": [...]
+  }
+}
+```
+
 - Calcula la semana ISO actual en **zona América/Guayaquil** (en JS, sin
   depender de funciones de Postgres).
 - Lee `employees` (todos) y `employee_benefit_usage` filtrado por
   `used_iso_week = semana actual`.
 - Es de solo lectura. No modifica nada.
+- Si alguna sub-consulta falla, `benefits` viene `null` y el cuadro
+  simplemente no se renderiza (el reporte principal sigue funcionando).
 
 **Helper nuevo:** `buildBenefitsView()` en `reportAggregations.js`.
 - Agrupa los usos por empleado.
@@ -149,13 +171,27 @@ Sin límites aplicados. Solo seguimiento informativo.
 | Archivo | Tipo |
 |---------|------|
 | `supabase/migration_011_expenses_category.sql` | Nuevo (migración SQL) |
-| `api/benefits-week.js` | Nuevo (endpoint serverless) |
+| `api/orders-range.js` | Modificado (agrega `?includeBenefits=1`) |
 | `src/components/layout/Layout.jsx` | Modificado (quita Dashboard) |
 | `src/App.jsx` | Modificado (redirect /dashboard → /reportes) |
 | `src/lib/reportAggregations.js` | Modificado (computeKpis + buildBenefitsView) |
 | `src/pages/Reports.jsx` | Modificado (KPIs, pagos, ganancia, top productos, beneficios) |
 | `src/lib/exports.js` | Modificado (resumen Excel/PDF con delivery + ganancia) |
 | `INSTRUCCIONES_FASE_A.md` | Nuevo (este README) |
+
+**Conteo de Serverless Functions: 12 / 12** (límite del plan Hobby de Vercel):
+1. anulados.js
+2. create-order.js
+3. daily-report.js
+4. dashboard.js
+5. expenses.js
+6. order-edit.js
+7. order-restore.js
+8. order-soft-delete.js
+9. order-status.js
+10. orders-active.js
+11. orders-range.js
+12. orders-today.js
 
 **No se tocó:**
 - `/api/create-order.js` (byte-idéntico al original)

@@ -73,8 +73,8 @@ export default function Reports() {
   const [expenses, setExpenses] = useState([])
   const [prevYearOrders, setPrevYearOrders] = useState([])
   const [yearExpenses, setYearExpenses] = useState([])
-  // Beneficios semanales (cuadro de empleados y dueños). Endpoint dedicado
-  // /api/benefits-week que solo lee; no afecta a los reportes principales.
+  // Beneficios semanales (cuadro de empleados y dueños). Vienen en el mismo
+  // payload de /api/orders-range cuando se pasa includeBenefits=1.
   const [benefits, setBenefits] = useState(null)  // { today, isoWeek, employees, usages }
 
   // Estados de carga (inicia loading=true para no mostrar 0s falsos)
@@ -107,6 +107,10 @@ export default function Reports() {
   const rangeLabel = fmtRangeLabel(mode, year, customFrom, customTo)
 
   // ----- Cargar datos del rango principal -----
+  // /api/orders-range ahora también devuelve el bloque de beneficios de la
+  // semana actual cuando se pasa includeBenefits=1. Esto evita un endpoint
+  // serverless extra para mantenernos en el límite de 12 funciones del plan
+  // Hobby de Vercel.
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -115,7 +119,7 @@ export default function Reports() {
     ;(async () => {
       const [oRes, eRes] = await Promise.all([
         apiFetch(
-          `/api/orders-range?from=${encodeURIComponent(start)}&to=${encodeURIComponent(end)}`,
+          `/api/orders-range?from=${encodeURIComponent(start)}&to=${encodeURIComponent(end)}&includeBenefits=1`,
           {},
           15_000
         ),
@@ -130,25 +134,15 @@ export default function Reports() {
       if (eRes.error) { setError(eRes.error); setLoading(false); return }
       setOrders(oRes.data?.orders || [])
       setExpenses(eRes.data?.expenses || [])
+      // El bloque de beneficios viene en la misma respuesta. Si el servidor
+      // devuelve null (porque alguna sub-consulta falló), simplemente no
+      // mostramos el cuadro y el resto del reporte sigue funcionando.
+      setBenefits(oRes.data?.benefits || null)
       setReady(true)
       setLoading(false)
     })()
     return () => { cancelled = true }
-  }, [currentRange])
-
-  // ----- Cargar beneficios de la semana actual (cuadro de empleados/dueños) -----
-  // No depende del rango: siempre muestra la semana ISO actual en Ecuador.
-  // Si el endpoint falla, simplemente no se muestra el cuadro; el resto del
-  // reporte sigue funcionando.
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      const { data, error } = await apiFetch('/api/benefits-week', {}, 10_000)
-      if (cancelled) return
-      if (!error && data?.success) setBenefits(data)
-    })()
-    return () => { cancelled = true }
-  }, [refreshKey])
+  }, [currentRange, refreshKey])
 
   // Vista derivada de los beneficios. orders se pasa para resolver order_number
   // a partir del order_id guardado en employee_benefit_usage.
@@ -427,8 +421,9 @@ export default function Reports() {
       )}
 
       {/* ===== Cuadros de beneficios semanales (empleados y dueños) =====
-            Lectura desde /api/benefits-week. Si el endpoint falla o todavía
-            está cargando, simplemente no se renderiza nada. */}
+            Lectura desde el bloque benefits del payload de /api/orders-range
+            (includeBenefits=1). Si falla o todavía está cargando, simplemente
+            no se renderiza nada. */}
       {benefitsView && (benefitsView.employeesView.length > 0 || benefitsView.ownersView.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
           {benefitsView.employeesView.length > 0 && (
