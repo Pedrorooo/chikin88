@@ -217,7 +217,15 @@ export const buildBenefitsView = ({ employees, usages, orders, today, isoWeek })
     return o?.order_number || null
   }
 
-  const isOwner = (e) => e.role === 'dueño' || e.role === 'dueno'
+  // Lista oficial de dueños (defensa extra: aunque la columna `role` de la BD
+  // ya marca a estos 3 como 'dueño', preferimos ser explícitos en la UI por
+  // si llegara un row con role nulo o incorrecto. La fuente de verdad para
+  // limitar beneficios sigue siendo el trigger handle_benefit_order.)
+  const OWNER_USERNAMES = new Set(['Cindy88', 'Daivid88', 'Stephano88'])
+  const isOwner = (e) =>
+    e.role === 'dueño' ||
+    e.role === 'dueno' ||
+    OWNER_USERNAMES.has(e.username)
 
   // Para cada uso, decidimos si entra en "hoy" (descuento diario) o "esta
   // semana" (cortesía semanal). Las comparaciones se hacen con strings de

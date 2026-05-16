@@ -38,7 +38,7 @@ export default withAuth(async (req, res, { supaSrv }) => {
     return res.status(405).json({ success: false, error: 'Method not allowed' })
   }
 
-  const { from, to, light, includeBenefits } = req.query || {}
+  const { from, to, light, includeBenefits, week } = req.query || {}
   if (!from || !to) {
     return res.status(400).json({ success: false, error: 'Faltan parámetros from/to' })
   }
@@ -65,7 +65,10 @@ export default withAuth(async (req, res, { supaSrv }) => {
   // endpoint cuando Reports solo necesita los pedidos.
   let benefitsBlock = null
   if (includeBenefits === '1') {
-    const isoWeek = isoWeekInEcuador()
+    // Si el cliente pasa ?week=YYYY-Www, mostramos beneficios de esa semana.
+    // Si no, semana actual en zona Ecuador.
+    const weekValid = typeof week === 'string' && /^\d{4}-W\d{2}$/.test(week)
+    const isoWeek = weekValid ? week : isoWeekInEcuador()
     const today = todayInEcuador()
 
     const [empRes, usRes] = await Promise.all([

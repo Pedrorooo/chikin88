@@ -6,6 +6,7 @@ import {
   RefreshCw, Trash2, X, AlertTriangle, Loader2, RotateCw,
   Banknote, ArrowRightLeft, GraduationCap,
   Bike, Users, Crown, Check, Clock as Clock4,
+  ChevronLeft, ChevronRight, CalendarDays,
 } from 'lucide-react'
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar,
@@ -18,6 +19,7 @@ import { useOrderStore } from '../store/orderStore'
 import {
   money, fmtDate, fmtTime, cx, STATUS_LABEL,
   todayRange, weekRange, monthRange,
+  prevIsoWeek, nextIsoWeek, isoWeekHumanRange,
 } from '../lib/utils'
 import {
   validOrders, groupOrdersByTime, granularityForRange,
@@ -76,6 +78,10 @@ export default function Reports() {
   // Beneficios semanales (cuadro de empleados y dueños). Vienen en el mismo
   // payload de /api/orders-range cuando se pasa includeBenefits=1.
   const [benefits, setBenefits] = useState(null)  // { today, isoWeek, employees, usages }
+  // Semana seleccionada para el cuadro de beneficios. null = semana actual
+  // (se calcula en el servidor en zona Ecuador). El usuario puede navegar a
+  // semanas anteriores/siguientes con los botones del cuadro.
+  const [benefitsWeek, setBenefitsWeek] = useState(null)
 
   // Estados de carga (inicia loading=true para no mostrar 0s falsos)
   const [loading, setLoading] = useState(true)
@@ -106,20 +112,23 @@ export default function Reports() {
 
   const rangeLabel = fmtRangeLabel(mode, year, customFrom, customTo)
 
-  // ----- Cargar datos del rango principal -----
-  // /api/orders-range ahora también devuelve el bloque de beneficios de la
-  // semana actual cuando se pasa includeBenefits=1. Esto evita un endpoint
-  // serverless extra para mantenernos en el límite de 12 funciones del plan
-  // Hobby de Vercel.
+  // ----- Cargar datos del rango principal (pedidos + gastos) -----
+  // En la carga inicial pedimos también el bloque benefits para mostrar la
+  // semana actual sin un round-trip extra. Cuando el usuario navega a otra
+  // semana, el segundo useEffect (más abajo) refetcha solo benefits con la
+  // semana elegida sin recargar los pedidos.
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     const { start, end } = currentRange
+    // Solo pedimos benefits inline si todavía no hemos elegido una semana
+    // distinta. Si benefitsWeek tiene valor, esa carga la hace el otro effect.
+    const inlineBenefits = benefitsWeek === null
     ;(async () => {
       const [oRes, eRes] = await Promise.all([
         apiFetch(
-          `/api/orders-range?from=${encodeURIComponent(start)}&to=${encodeURIComponent(end)}&includeBenefits=1`,
+          `/api/orders-range?from=${encodeURIComponent(start)}&to=${encodeURIComponent(end)}${inlineBenefits ? '&includeBenefits=1' : ''}`,
           {},
           15_000
         ),
@@ -134,15 +143,38 @@ export default function Reports() {
       if (eRes.error) { setError(eRes.error); setLoading(false); return }
       setOrders(oRes.data?.orders || [])
       setExpenses(eRes.data?.expenses || [])
-      // El bloque de beneficios viene en la misma respuesta. Si el servidor
-      // devuelve null (porque alguna sub-consulta falló), simplemente no
-      // mostramos el cuadro y el resto del reporte sigue funcionando.
-      setBenefits(oRes.data?.benefits || null)
+      if (inlineBenefits) {
+        setBenefits(oRes.data?.benefits || null)
+      }
       setReady(true)
       setLoading(false)
     })()
     return () => { cancelled = true }
+    // benefitsWeek intencionalmente excluido: cuando cambia, el otro effect
+    // se encarga; no queremos recargar pedidos al navegar de semana.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentRange, refreshKey])
+
+  // ----- Cargar SOLO beneficios cuando el usuario cambia de semana -----
+  // No depende del rango ni recarga pedidos. Hace una llamada ligera al
+  // mismo endpoint (orders-range con un rango de 0 minutos no devuelve
+  // pedidos pero sí el bloque benefits).
+  useEffect(() => {
+    if (benefitsWeek === null) return  // carga inicial ya trajo la semana actual
+    let cancelled = false
+    ;(async () => {
+      // Rango mínimo (un instante) — el endpoint requiere from/to pero solo
+      // nos interesa el bloque benefits con la semana específica.
+      const now = new Date().toISOString()
+      const url = `/api/orders-range?from=${encodeURIComponent(now)}&to=${encodeURIComponent(now)}&includeBenefits=1&week=${encodeURIComponent(benefitsWeek)}`
+      const { data, error } = await apiFetch(url, {}, 10_000)
+      if (cancelled) return
+      if (!error && data?.benefits) {
+        setBenefits(data.benefits)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [benefitsWeek])
 
   // Vista derivada de los beneficios. orders se pasa para resolver order_number
   // a partir del order_id guardado en employee_benefit_usage.
@@ -420,18 +452,32 @@ export default function Reports() {
         </div>
       )}
 
-      {/* ===== Cuadros de beneficios semanales (empleados y dueños) =====
+      {/* ===== Sección de beneficios semanales =====
             Lectura desde el bloque benefits del payload de /api/orders-range
             (includeBenefits=1). Si falla o todavía está cargando, simplemente
-            no se renderiza nada. */}
-      {benefitsView && (benefitsView.employeesView.length > 0 || benefitsView.ownersView.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          {benefitsView.employeesView.length > 0 && (
+            no se renderiza nada. El header de navegación de semana permite
+            ver semanas anteriores sin perder el contexto del rango principal. */}
+      {benefitsView && (
+        <div className="mb-6">
+          <BenefitsWeekHeader
+            isoWeek={benefits.isoWeek}
+            isCurrent={benefitsWeek === null}
+            onPrev={() => {
+              const current = benefitsWeek || benefits.isoWeek
+              const prev = prevIsoWeek(current)
+              if (prev) setBenefitsWeek(prev)
+            }}
+            onNext={() => {
+              const current = benefitsWeek || benefits.isoWeek
+              const next = nextIsoWeek(current)
+              if (next) setBenefitsWeek(next)
+            }}
+            onToday={() => setBenefitsWeek(null)}
+          />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <BenefitsEmployeeCard view={benefitsView.employeesView} isoWeek={benefits.isoWeek}/>
-          )}
-          {benefitsView.ownersView.length > 0 && (
             <BenefitsOwnerCard view={benefitsView.ownersView} isoWeek={benefits.isoWeek}/>
-          )}
+          </div>
         </div>
       )}
 
@@ -1014,116 +1060,246 @@ function CustomTooltip({ active, payload, label, moneyFields = [] }) {
 //    * si usó cortesía semanal (chip "Cortesía usada" con día/hora y #pedido,
 //      o "Cortesía disponible")
 // ============================================================
-function BenefitsEmployeeCard({ view, isoWeek }) {
+// ============================================================
+//  BenefitsWeekHeader — encabezado con navegación de semanas
+//
+//  Botones: « semana anterior · semana actual (botón "Hoy" si no
+//  estamos viendo la actual) · siguiente ».
+//  Muestra "YYYY-Www" prominente + el rango de fechas (lun – dom)
+//  abajo en gris.
+// ============================================================
+function BenefitsWeekHeader({ isoWeek, isCurrent, onPrev, onNext, onToday }) {
+  const range = isoWeekHumanRange(isoWeek)
   return (
-    <motion.div className="card p-4"
-      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-      <div className="flex items-center gap-2 mb-3">
-        <Users size={18} className="text-chikin-red"/>
-        <h3 className="font-bold text-base">Beneficios empleados</h3>
-        <span className="ml-auto text-[10px] text-zinc-400 uppercase tracking-wider">{isoWeek}</span>
-      </div>
-      <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-        {view.map(e => (
-          <div key={e.username}
-               className="flex items-center gap-2 p-2 rounded-lg bg-zinc-50 dark:bg-chikin-gray-800 border border-zinc-100 dark:border-chikin-gray-700">
-            <div className="flex-1 min-w-0">
-              <div className="font-bold text-sm truncate">{e.displayName}</div>
-              <div className="text-[10px] text-zinc-400">
-                Descuentos esta semana: <span className="font-bold text-zinc-600 dark:text-zinc-300">{e.discountsWeek}</span>
-              </div>
-            </div>
-            <div className="flex flex-col items-end gap-1">
-              {/* Descuento diario */}
-              {e.discountsToday > 0 ? (
-                <span className="chip bg-chikin-yellow text-chikin-black text-[9px] font-extrabold">
-                  <Check size={10}/> Hoy
-                </span>
-              ) : (
-                <span className="chip bg-zinc-200 dark:bg-chikin-gray-700 text-zinc-500 text-[9px] font-extrabold">
-                  Hoy disp.
-                </span>
-              )}
-              {/* Cortesía semanal */}
-              {e.courtesyWeek ? (
-                <span
-                  className="chip bg-emerald-600 text-white text-[9px] font-extrabold"
-                  title={`${fmtTime(e.courtesyAt) || ''}${e.courtesyOrderNumber ? ' · #' + e.courtesyOrderNumber : ''}`}
-                >
-                  🎁 {fmtTime(e.courtesyAt) || 'Usada'}
-                  {e.courtesyOrderNumber && (
-                    <span className="ml-1">#{e.courtesyOrderNumber}</span>
-                  )}
-                </span>
-              ) : (
-                <span className="chip bg-zinc-200 dark:bg-chikin-gray-700 text-zinc-500 text-[9px] font-extrabold">
-                  🎁 Pendiente
-                </span>
-              )}
-            </div>
+    <motion.div className="card p-4 mb-4 flex items-center gap-3 flex-wrap"
+      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className="w-10 h-10 rounded-xl bg-chikin-red text-white flex items-center justify-center shrink-0">
+          <CalendarDays size={20}/>
+        </div>
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">
+            Beneficios de la semana
           </div>
-        ))}
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="font-display text-xl md:text-2xl">{isoWeek}</span>
+            <span className="text-sm text-zinc-500">{range}</span>
+            {isCurrent && (
+              <span className="chip bg-emerald-100 text-emerald-700 text-[10px] font-extrabold uppercase">
+                Actual
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={onPrev}
+          className="btn bg-zinc-100 dark:bg-chikin-gray-800 hover:bg-zinc-200 dark:hover:bg-chikin-gray-700 px-3 py-2"
+          aria-label="Semana anterior"
+          title="Semana anterior"
+        >
+          <ChevronLeft size={16}/>
+          <span className="hidden sm:inline ml-0.5 text-xs font-bold">Anterior</span>
+        </button>
+        {!isCurrent && (
+          <button
+            onClick={onToday}
+            className="btn bg-chikin-red text-white hover:bg-chikin-red-dark px-3 py-2 text-xs font-bold"
+            title="Volver a la semana actual"
+          >
+            Hoy
+          </button>
+        )}
+        <button
+          onClick={onNext}
+          className="btn bg-zinc-100 dark:bg-chikin-gray-800 hover:bg-zinc-200 dark:hover:bg-chikin-gray-700 px-3 py-2"
+          aria-label="Semana siguiente"
+          title="Semana siguiente"
+        >
+          <span className="hidden sm:inline mr-0.5 text-xs font-bold">Siguiente</span>
+          <ChevronRight size={16}/>
+        </button>
       </div>
     </motion.div>
   )
 }
 
 // ============================================================
+//  BenefitsEmployeeCard — empleados normales (NO incluye dueños)
+//
+//  Diseño en filas espaciadas. Cada empleado se ve como una tarjeta
+//  mini con nombre destacado y dos estados claramente etiquetados:
+//
+//    Descuento diario (lunes-domingo)  → "Usado hoy" o "Disponible"
+//    Cortesía semanal                  → "Usada · 14:35 · #42" o "Pendiente"
+//
+//  Los chips están claramente coloreados:
+//    - amarillo = beneficio activo/usado
+//    - gris suave = pendiente/disponible
+// ============================================================
+function BenefitsEmployeeCard({ view, isoWeek }) {
+  return (
+    <motion.div className="card overflow-hidden"
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+      <div className="px-5 py-4 border-b border-zinc-100 dark:border-chikin-gray-700 bg-zinc-50/50 dark:bg-chikin-gray-900/40">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-chikin-red/10 text-chikin-red flex items-center justify-center">
+            <Users size={16}/>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-bold text-base leading-tight">Empleados</h3>
+            <p className="text-[11px] text-zinc-500">
+              {view.length} empleado{view.length === 1 ? '' : 's'} · descuento diario + cortesía semanal
+            </p>
+          </div>
+        </div>
+      </div>
+      {view.length === 0 ? (
+        <div className="p-6 text-center text-sm text-zinc-400">
+          Sin empleados registrados.
+        </div>
+      ) : (
+        <div className="divide-y divide-zinc-100 dark:divide-chikin-gray-800 max-h-[420px] overflow-y-auto">
+          {view.map(e => (
+            <div key={e.username} className="p-4 hover:bg-zinc-50 dark:hover:bg-chikin-gray-900/40 transition">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="font-bold text-sm">{e.displayName}</div>
+                {e.discountsWeek > 0 && (
+                  <span className="text-[10px] text-zinc-500">
+                    {e.discountsWeek} descuento{e.discountsWeek === 1 ? '' : 's'} esta semana
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {/* Descuento diario */}
+                <BenefitChip
+                  label="Descuento hoy"
+                  used={e.discountsToday > 0}
+                  usedText="Usado hoy"
+                  pendingText="Disponible"
+                  color="yellow"
+                />
+                {/* Cortesía semanal */}
+                <BenefitChip
+                  label="Cortesía semanal"
+                  used={e.courtesyWeek}
+                  usedText={
+                    <>
+                      Usada{e.courtesyAt ? ` · ${fmtTime(e.courtesyAt)}` : ''}
+                      {e.courtesyOrderNumber ? ` · #${e.courtesyOrderNumber}` : ''}
+                    </>
+                  }
+                  pendingText="Pendiente"
+                  color="emerald"
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </motion.div>
+  )
+}
+
+// Sub-componente reutilizable para chip de beneficio.
+// "color" decide la tonalidad cuando el chip está en estado USADO.
+// Cuando está pendiente siempre es gris suave.
+function BenefitChip({ label, used, usedText, pendingText, color }) {
+  const usedClasses = color === 'yellow'
+    ? 'bg-chikin-yellow/90 text-chikin-black border-chikin-yellow'
+    : 'bg-emerald-600 text-white border-emerald-600'
+  const icon = color === 'yellow' ? '⭐' : '🎁'
+  return (
+    <div className={cx(
+      'flex items-center gap-2 px-2.5 py-1.5 rounded-lg border',
+      used
+        ? usedClasses
+        : 'bg-zinc-100 dark:bg-chikin-gray-800 text-zinc-500 border-zinc-200 dark:border-chikin-gray-700'
+    )}>
+      <span className="text-base leading-none">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-[9px] uppercase tracking-wider font-extrabold opacity-80 leading-tight">
+          {label}
+        </div>
+        <div className="text-[11px] font-bold truncate leading-tight">
+          {used ? usedText : pendingText}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
 //  BenefitsOwnerCard — dueños (Cindy88, Daivid88, Stephano88)
 //
-//  Sin límites. Muestra totales de la semana y los últimos 5 usos
-//  con día/hora y número de pedido (si está disponible).
+//  Sin límites. Muestra contadores grandes de la semana y los
+//  últimos 5 usos con hora + #pedido. Layout más vertical/espacioso
+//  para que se lea cómodo.
 // ============================================================
 function BenefitsOwnerCard({ view, isoWeek }) {
   return (
-    <motion.div className="card p-4 bg-amber-50/40 dark:bg-amber-950/10 border-amber-200 dark:border-amber-900/40"
+    <motion.div className="card overflow-hidden border-amber-300/40 dark:border-amber-900/40"
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-      <div className="flex items-center gap-2 mb-3">
-        <Crown size={18} className="text-amber-600"/>
-        <h3 className="font-bold text-base">Dueños (sin límite)</h3>
-        <span className="ml-auto text-[10px] text-zinc-400 uppercase tracking-wider">{isoWeek}</span>
-      </div>
-      <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {view.map(o => (
-          <div key={o.username}
-               className="p-2.5 rounded-lg bg-white dark:bg-chikin-gray-800 border border-amber-200/60 dark:border-amber-900/40">
-            <div className="flex items-center gap-2">
-              <div className="flex-1 min-w-0">
-                <div className="font-bold text-sm truncate">{o.displayName}</div>
-              </div>
-              <div className="flex gap-1.5">
-                <span className="chip bg-chikin-yellow text-chikin-black text-[9px] font-extrabold">
-                  ⭐ {o.discountsWeek}
-                </span>
-                <span className="chip bg-emerald-600 text-white text-[9px] font-extrabold">
-                  🎁 {o.courtesiesWeek}
-                </span>
-              </div>
-            </div>
-            {o.lastUses.length > 0 && (
-              <div className="mt-1.5 space-y-0.5">
-                {o.lastUses.map((u, i) => (
-                  <div key={i} className="text-[10px] text-zinc-500 flex items-center gap-1.5">
-                    <Clock4 size={10}/>
-                    <span className="font-bold">
-                      {u.type === 'discount' ? '⭐' : '🎁'}
-                    </span>
-                    <span>{fmtTime(u.at) || '—'}</span>
-                    {u.orderNumber && (
-                      <span className="text-zinc-400">· #{u.orderNumber}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            {o.lastUses.length === 0 && (
-              <div className="mt-1 text-[10px] text-zinc-400 italic">
-                Sin usos esta semana
-              </div>
-            )}
+      <div className="px-5 py-4 border-b border-amber-200/40 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/10">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-400 flex items-center justify-center">
+            <Crown size={16}/>
           </div>
-        ))}
+          <div className="flex-1 min-w-0">
+            <h3 className="font-bold text-base leading-tight">Dueños</h3>
+            <p className="text-[11px] text-zinc-500">
+              Sin límite · solo seguimiento
+            </p>
+          </div>
+        </div>
       </div>
+      {view.length === 0 ? (
+        <div className="p-6 text-center text-sm text-zinc-400">
+          Sin dueños registrados.
+        </div>
+      ) : (
+        <div className="divide-y divide-amber-100/60 dark:divide-amber-900/30 max-h-[420px] overflow-y-auto">
+          {view.map(o => (
+            <div key={o.username} className="p-4">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="font-bold text-sm">{o.displayName}</div>
+                <div className="flex gap-1.5">
+                  <span className="chip bg-chikin-yellow text-chikin-black text-[10px] font-extrabold">
+                    ⭐ {o.discountsWeek}
+                  </span>
+                  <span className="chip bg-emerald-600 text-white text-[10px] font-extrabold">
+                    🎁 {o.courtesiesWeek}
+                  </span>
+                </div>
+              </div>
+              {o.lastUses.length > 0 ? (
+                <div className="space-y-1">
+                  <div className="text-[9px] uppercase tracking-wider text-zinc-400 font-bold">
+                    Últimos usos
+                  </div>
+                  {o.lastUses.map((u, i) => (
+                    <div key={i} className="text-[11px] text-zinc-600 dark:text-zinc-300 flex items-center gap-1.5 pl-1">
+                      <Clock4 size={11} className="text-zinc-400"/>
+                      <span className="text-sm leading-none">
+                        {u.type === 'discount' ? '⭐' : '🎁'}
+                      </span>
+                      <span className="font-semibold">{fmtTime(u.at) || '—'}</span>
+                      {u.orderNumber && (
+                        <span className="text-zinc-400">· pedido #{u.orderNumber}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[11px] text-zinc-400 italic">
+                  Sin usos esta semana
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </motion.div>
   )
 }

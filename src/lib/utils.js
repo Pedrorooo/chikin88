@@ -262,3 +262,67 @@ export const studentDiscountTotal = (items, isStudent) => {
   if (!isStudent || !Array.isArray(items)) return 0
   return round2(items.reduce((s, it) => s + itemStudentDiscount(it), 0))
 }
+
+// ============================================================
+//  Helpers de semana ISO (zona Ecuador implícita)
+//
+//  Los strings tienen formato "YYYY-Www" (p.ej. "2026-W20").
+//  El backend ya devuelve la semana actual calculada en zona
+//  América/Guayaquil; estos helpers solo navegan a anterior/siguiente
+//  preservando reglas ISO 8601 (semana inicia en lunes; semana 1
+//  contiene el primer jueves del año).
+// ============================================================
+
+// Convierte una fecha JS en string ISO week "YYYY-Www"
+const dateToIsoWeek = (date) => {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  const dayNum = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+  return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`
+}
+
+// Toma "YYYY-Www" y devuelve la fecha JS del lunes (00:00 UTC) de esa
+// semana ISO. Usado solo para hacer ± 7 días y volver a serializar.
+const isoWeekToMonday = (isoWeek) => {
+  const m = /^(\d{4})-W(\d{2})$/.exec(isoWeek)
+  if (!m) return null
+  const year = Number(m[1])
+  const week = Number(m[2])
+  // Algoritmo: 4 de enero siempre está en la semana 1 ISO.
+  const jan4 = new Date(Date.UTC(year, 0, 4))
+  const jan4Day = jan4.getUTCDay() || 7
+  const week1Monday = new Date(jan4)
+  week1Monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1)
+  const target = new Date(week1Monday)
+  target.setUTCDate(week1Monday.getUTCDate() + (week - 1) * 7)
+  return target
+}
+
+// Devuelve la semana ISO anterior. Si la entrada es inválida devuelve null.
+export const prevIsoWeek = (isoWeek) => {
+  const monday = isoWeekToMonday(isoWeek)
+  if (!monday) return null
+  monday.setUTCDate(monday.getUTCDate() - 7)
+  return dateToIsoWeek(monday)
+}
+
+// Devuelve la semana ISO siguiente.
+export const nextIsoWeek = (isoWeek) => {
+  const monday = isoWeekToMonday(isoWeek)
+  if (!monday) return null
+  monday.setUTCDate(monday.getUTCDate() + 7)
+  return dateToIsoWeek(monday)
+}
+
+// Devuelve el rango fmt "lun N mes – dom N mes" para mostrar al usuario
+// debajo del badge "YYYY-Www". Idioma es-EC.
+export const isoWeekHumanRange = (isoWeek) => {
+  const monday = isoWeekToMonday(isoWeek)
+  if (!monday) return ''
+  const sunday = new Date(monday)
+  sunday.setUTCDate(monday.getUTCDate() + 6)
+  const fmt = new Intl.DateTimeFormat('es-EC', { day: 'numeric', month: 'short' })
+  return `${fmt.format(monday)} – ${fmt.format(sunday)}`
+}
