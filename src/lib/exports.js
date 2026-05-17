@@ -14,7 +14,7 @@ const fmtDateTime = (iso) => new Date(iso).toLocaleString('es-EC', {
 // =================== CSV ===================
 export const exportCSV = ({ orders, rangeLabel }) => {
   const rows = [
-    ['#Diario', '#Global', 'Fecha', 'Hora', 'Cliente', 'Estado', 'Tipo', 'Pago', 'Efectivo', 'Transfer', 'Mayo', 'Mayo extra', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total'].join(','),
+    ['#Diario', '#Global', 'Fecha', 'Hora', 'Cliente', 'Estado', 'Tipo', 'Pago', 'Efectivo', 'Transfer', 'Mayo', 'Mayo extra', 'Subtotal', 'Delivery', 'Delivery pago', 'Descuento', 'Promo', 'Total'].join(','),
     ...orders.map(o => {
       const d = new Date(o.created_at)
       return [
@@ -32,6 +32,7 @@ export const exportCSV = ({ orders, rangeLabel }) => {
         Number(o.mayo_extra || 0),
         Number(o.subtotal || 0).toFixed(2),
         Number(o.delivery_fee || 0).toFixed(2),
+        o.is_delivery ? (o.delivery_payment_method || '') : '',
         Number(o.discount_amount || 0).toFixed(2),
         o.discount_type === 'student' ? 'estudiante' : '',
         Number(o.total || 0).toFixed(2),
@@ -49,7 +50,7 @@ export const exportCSV = ({ orders, rangeLabel }) => {
 }
 
 // =================== Excel ===================
-export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit, rangeLabel }) => {
+export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit, rangeLabel, topSauces }) => {
   const XLSX = await import('xlsx')
 
   const wb = XLSX.utils.book_new()
@@ -73,6 +74,8 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
     ['Pedidos válidos', kpis.orderCount],
     ['Ingresos brutos', kpis.revenue],
     ['Delivery pagado', kpis.deliveryPaid || 0],
+    ['  Delivery en efectivo', kpis.deliveryPaidCash || 0],
+    ['  Delivery en transferencia', kpis.deliveryPaidTransfer || 0],
     ['Ingresos netos de venta', (kpis.netRevenue ?? (kpis.revenue - (kpis.deliveryPaid || 0)))],
     ['Gastos', kpis.expenses],
     ['Ganancia neta', kpis.profit],
@@ -89,7 +92,7 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumen), 'Resumen')
 
   // Hoja 2: Pedidos
-  const pedidosHeader = ['#Diario', '#Global', 'Fecha', 'Cliente', 'Teléfono', 'Estado', 'Tipo', 'Pago', 'Efectivo', 'Transfer', 'Mayo', 'Mayo extra', 'Subtotal', 'Delivery', 'Descuento', 'Promo', 'Total']
+  const pedidosHeader = ['#Diario', '#Global', 'Fecha', 'Cliente', 'Teléfono', 'Estado', 'Tipo', 'Pago', 'Efectivo', 'Transfer', 'Mayo', 'Mayo extra', 'Subtotal', 'Delivery', 'Delivery pago', 'Descuento', 'Promo', 'Total']
   const pedidosRows = orders.map(o => [
     o.daily_order_number ?? '',
     o.order_number,
@@ -105,6 +108,7 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
     Number(o.mayo_extra || 0),
     Number(o.subtotal || 0),
     Number(o.delivery_fee || 0),
+    o.is_delivery ? (o.delivery_payment_method || '') : '',
     Number(o.discount_amount || 0),
     o.discount_type === 'student' ? 'estudiante' : '',
     Number(o.total || 0),
@@ -115,6 +119,13 @@ export const exportExcel = async ({ orders, expenses, kpis, top, monthly, profit
   const prodHeader = ['Posición', 'Producto', 'Categoría', 'Cantidad', 'Ingresos']
   const prodRows = top.map((p, i) => [i + 1, p.name, p.category, p.qty, p.revenue])
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([prodHeader, ...prodRows]), 'Productos')
+
+  // Hoja 3b: Sabores más pedidos (salsas en combos + Salsa extra)
+  if (topSauces && topSauces.items && topSauces.items.length > 0) {
+    const saucesHeader = ['Posición', 'Sabor', 'Cantidad', 'Porcentaje %']
+    const saucesRows = topSauces.items.map((s, i) => [i + 1, s.name, s.count, s.percent])
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([saucesHeader, ...saucesRows]), 'Sabores')
+  }
 
   // Hoja 4: Comparativa mensual
   if (monthly && monthly.length) {
@@ -187,7 +198,11 @@ export const exportPDF = async ({ orders, kpis, top, profit, rangeLabel }) => {
 
   const kpiRows = [
     ['Pedidos válidos', kpis.orderCount.toString()],
-    ['Ingresos', fmtMoney(kpis.revenue)],
+    ['Ingresos brutos', fmtMoney(kpis.revenue)],
+    ['Delivery pagado', fmtMoney(kpis.deliveryPaid || 0)],
+    ['  Delivery en efectivo', fmtMoney(kpis.deliveryPaidCash || 0)],
+    ['  Delivery en transferencia', fmtMoney(kpis.deliveryPaidTransfer || 0)],
+    ['Ingresos netos de venta', fmtMoney(kpis.netRevenue ?? (kpis.revenue - (kpis.deliveryPaid || 0)))],
     ['Gastos', fmtMoney(kpis.expenses)],
     ['Ganancia neta', fmtMoney(kpis.profit)],
     ['Ticket promedio', fmtMoney(kpis.avgTicket)],

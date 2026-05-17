@@ -356,6 +356,11 @@ function OrderDetails({ order }) {
               Sí {deliveryFee > 0 && <span className="ml-1 text-blue-600">+{money(deliveryFee)}</span>}
             </DetailRow>
           )}
+          {order.is_delivery && order.delivery_payment_method && (
+            <DetailRow label="Delivery pago">
+              {order.delivery_payment_method === 'efectivo' ? '💵 Efectivo' : '💳 Transferencia'}
+            </DetailRow>
+          )}
           {order.order_type && !order.is_delivery && (
             <DetailRow label="Tipo">
               {order.order_type === 'abierto' ? 'Abierto' : 'Para llevar'}
@@ -548,7 +553,18 @@ function ItemDetail({ item }) {
       {item.ramen_type && (
         <div className="text-[11px] text-zinc-600 dark:text-zinc-300 mt-1.5">
           <span className="font-semibold">Ramen:</span>{' '}
-          {item.ramen_type === 'picante' ? 'Picante' : item.ramen_type === 'carbonara' ? 'Carbonara' : item.ramen_type}
+          {item.ramen_type === 'picante' ? 'Picante'
+            : item.ramen_type === 'carbonara' ? 'Carbonara'
+            : item.ramen_type === 'carne' ? 'Carne'
+            : item.ramen_type}
+        </div>
+      )}
+
+      {/* Sabor de bebida / salsa extra */}
+      {item.item_flavor && (
+        <div className="text-[11px] text-zinc-600 dark:text-zinc-300 mt-1.5">
+          <span className="font-semibold">Sabor:</span>{' '}
+          <span className="text-blue-700 dark:text-blue-400 font-bold">{item.item_flavor}</span>
         </div>
       )}
 

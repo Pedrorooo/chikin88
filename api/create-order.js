@@ -206,6 +206,10 @@ export default async function handler(req, res) {
       benefit_employee: body.benefit_employee || null,
       client_request_id: body.client_request_id || null,
 
+      // Método de pago del delivery (post-Fase B, migración 013).
+      // Solo aplica si is_delivery = true; la RPC fuerza null si no.
+      delivery_payment_method: body.delivery_payment_method || null,
+
       items: body.items.map(it => ({
         product_id: it.product_id || null,
         product_name: String(it.product_name),
@@ -215,6 +219,9 @@ export default async function handler(req, res) {
         sauces: Array.isArray(it.sauces) ? it.sauces : [],
         sauce_mode: it.sauce_mode || 'normal',
         ramen_type: it.ramen_type || null,
+        // Sabor genérico para bebidas con variantes y "Salsa extra"
+        // (post-migración 013). No mezcla con ramen_type.
+        item_flavor: it.item_flavor || null,
         subtotal: parseMoney(it.subtotal ?? (parseMoney(it.unit_price) * Number(it.quantity))),
       })),
     }

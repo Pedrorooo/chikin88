@@ -26,6 +26,7 @@ export const PRODUCTS = [
   { name: 'Gomitas Peel',         category: 'Extras',      price:  3.50, allows_extras: false, free_sauces: 0 },
   { name: 'Porción de papas',     category: 'Extras',      price:  1.50, allows_extras: false, free_sauces: 0 },
   { name: 'Caja extra',           category: 'Extras',      price:  0.25, allows_extras: false, free_sauces: 0 },
+  { name: 'Salsa extra',          category: 'Extras',      price:  0.25, allows_extras: false, free_sauces: 0 },
 ]
 
 export const CATEGORIES = ['Principales', 'Ramen', 'Bebidas', 'Extras']

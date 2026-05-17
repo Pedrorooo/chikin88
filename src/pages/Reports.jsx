@@ -6,7 +6,7 @@ import {
   RefreshCw, Trash2, X, AlertTriangle, Loader2, RotateCw,
   Banknote, ArrowRightLeft, GraduationCap,
   Bike, Users, Crown, Check, Clock as Clock4,
-  ChevronLeft, ChevronRight, CalendarDays,
+  ChevronLeft, ChevronRight, CalendarDays, Flame,
 } from 'lucide-react'
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar,
@@ -25,7 +25,7 @@ import {
 import {
   validOrders, groupOrdersByTime, granularityForRange,
   topProducts, monthlySalesForYear, annualComparison,
-  monthlyProfit, computeKpis, buildBenefitsView,
+  monthlyProfit, computeKpis, buildBenefitsView, topSauces,
 } from '../lib/reportAggregations'
 import { exportCSV, exportExcel, exportPDF } from '../lib/exports'
 
@@ -235,6 +235,7 @@ export default function Reports() {
   )
 
   const top = useMemo(() => topProducts(orders, 10), [orders])
+  const topSaucesData = useMemo(() => topSauces(orders, 15), [orders])
 
   const monthlySeries = useMemo(
     () => mode === 'year' ? monthlySalesForYear(orders, year) : null,
@@ -264,6 +265,7 @@ export default function Reports() {
         expenses,
         kpis,
         top,
+        topSauces: topSaucesData,
         monthly: monthlySeries,
         profit: profitSeries,
         rangeLabel,
@@ -414,6 +416,26 @@ export default function Reports() {
               <span>− Delivery pagado</span>
               <span>−{money(kpis.deliveryPaid)}</span>
             </div>
+            {(kpis.deliveryPaidCash > 0 || kpis.deliveryPaidTransfer > 0) && (
+              <div className="pl-3 text-[11px] text-zinc-500 space-y-0.5">
+                {kpis.deliveryPaidCash > 0 && (
+                  <div className="flex justify-between">
+                    <span className="flex items-center gap-1">
+                      <Banknote size={11}/> en efectivo
+                    </span>
+                    <span>{money(kpis.deliveryPaidCash)}</span>
+                  </div>
+                )}
+                {kpis.deliveryPaidTransfer > 0 && (
+                  <div className="flex justify-between">
+                    <span className="flex items-center gap-1">
+                      <ArrowRightLeft size={11}/> en transferencia
+                    </span>
+                    <span>{money(kpis.deliveryPaidTransfer)}</span>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex justify-between text-zinc-600 dark:text-zinc-300">
               <span>= Ingresos netos de venta</span>
               <span>{money(kpis.netRevenue)}</span>
@@ -610,6 +632,58 @@ export default function Reports() {
           </div>
         )}
       </ChartCard>
+
+      {/* ===== Sabores/salsas más pedidos =====
+            Cuenta cada salsa seleccionada × quantity del item.
+            Incluye también el sabor de "Salsa extra" (item_flavor).
+            Si no hay datos en el rango, no se renderiza nada. */}
+      {topSaucesData.items.length > 0 && (
+        <motion.div className="card overflow-hidden mt-4"
+          initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+          <div className="p-4 border-b border-zinc-200 dark:border-chikin-gray-700 flex items-center gap-2 flex-wrap">
+            <div className="w-8 h-8 rounded-lg bg-chikin-red/10 text-chikin-red flex items-center justify-center">
+              <Flame size={16}/>
+            </div>
+            <div className="min-w-0">
+              <h2 className="font-bold leading-tight">Sabores más pedidos</h2>
+              <p className="text-[11px] text-zinc-500">
+                Salsas elegidas en combos + Salsa extra · {topSaucesData.totalSelections} selecciones
+              </p>
+            </div>
+          </div>
+          <div className="p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {topSaucesData.items.map((s, i) => {
+                const barPct = topSaucesData.items[0].count > 0
+                  ? Math.round((s.count / topSaucesData.items[0].count) * 100)
+                  : 0
+                return (
+                  <div key={s.name} className="flex items-center gap-2 p-2 rounded-lg bg-zinc-50 dark:bg-chikin-gray-800 border border-zinc-100 dark:border-chikin-gray-700">
+                    <span className="text-[10px] font-extrabold text-zinc-400 w-5 text-right">
+                      {i + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <span className="font-bold truncate">{s.name}</span>
+                        <span className="text-zinc-500 text-xs whitespace-nowrap">
+                          <span className="font-bold text-chikin-red">{s.count}</span>
+                          <span className="text-zinc-400 ml-1">· {s.percent}%</span>
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1.5 bg-zinc-200 dark:bg-chikin-gray-700 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-chikin-red rounded-full"
+                          style={{ width: `${barPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* ===== Detalle de pedidos (con botón Anular para admin) ===== */}
       <motion.div className="card overflow-hidden mt-4"

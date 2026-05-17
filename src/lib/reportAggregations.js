@@ -80,6 +80,60 @@ export const topProducts = (orders, limit = 10) => {
     .slice(0, limit)
 }
 
+// ---------- Sabores/salsas más pedidos en combos (cuenta selecciones) ----------
+//
+// Recorre order_items.sauces (array de strings) en pedidos válidos. Cada
+// salsa seleccionada cuenta `quantity` veces (si el pedido tenía 2 combos,
+// cuenta 2). Solo cuentan items con sauces no vacíos (no cuentan bebidas
+// ni extras sin salsa). Devuelve `[{ name, count, percent }]` ordenado
+// desc por count, con `percent` sobre el total de selecciones de salsa
+// en el rango.
+//
+// IMPORTANTE: usa solo datos guardados en order_items.sauces. No mezcla
+// con item_flavor (que es para bebidas y "Salsa extra" — esos no son
+// "salsas dentro de un combo de pollo"). Las salsas elegidas como item
+// "Salsa extra" sí cuentan también, porque su sabor se guarda en
+// item_flavor y representa una salsa elegida explícitamente.
+export const topSauces = (orders, limit = 15) => {
+  const map = new Map()
+  let total = 0
+
+  const bump = (name, by) => {
+    if (!name) return
+    const n = String(name).trim()
+    if (!n) return
+    map.set(n, (map.get(n) || 0) + by)
+    total += by
+  }
+
+  for (const o of validOrders(orders)) {
+    for (const it of (o.order_items || [])) {
+      const qty = Number(it.quantity) || 0
+      if (qty <= 0) continue
+      // Salsas seleccionadas del combo
+      if (Array.isArray(it.sauces)) {
+        for (const s of it.sauces) bump(s, qty)
+      }
+      // "Salsa extra" como item independiente: el sabor está en item_flavor
+      const pname = (it.product_name || '').toLowerCase().trim()
+      if (pname === 'salsa extra' && it.item_flavor) {
+        bump(it.item_flavor, qty)
+      }
+    }
+  }
+
+  const arr = [...map.entries()]
+    .map(([name, count]) => ({
+      name,
+      count,
+      percent: total > 0 ? Math.round((count / total) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit)
+
+  return { items: arr, totalSelections: total }
+}
+
 // ---------- Ventas mensuales de un año dado ----------
 export const monthlySalesForYear = (orders, year) => {
   const totals = Array.from({ length: 12 }, (_, i) => ({
@@ -164,6 +218,15 @@ export const computeKpis = (orders, expenses) => {
   const deliveryPaid = valid
     .filter(o => o.is_delivery)
     .reduce((s, o) => s + Number(o.delivery_fee || 0), 0)
+  // Desglose del delivery por método de pago (migración 013).
+  // delivery_payment_method puede ser null en pedidos antiguos: ahí
+  // no se cuenta en ninguno de los dos (queda en "sin asignar").
+  const deliveryPaidCash = valid
+    .filter(o => o.is_delivery && o.delivery_payment_method === 'efectivo')
+    .reduce((s, o) => s + Number(o.delivery_fee || 0), 0)
+  const deliveryPaidTransfer = valid
+    .filter(o => o.is_delivery && o.delivery_payment_method === 'transferencia')
+    .reduce((s, o) => s + Number(o.delivery_fee || 0), 0)
   // Promo estudiante: cuántos pedidos y cuánto descuento total se aplicó.
   const studentOrders = valid.filter(o => o.discount_type === 'student')
   const studentCount  = studentOrders.length
@@ -178,6 +241,8 @@ export const computeKpis = (orders, expenses) => {
     netRevenue,                    // bruto - delivery (lo que se queda el local antes de gastos)
     expenses: expSum,
     deliveryPaid,
+    deliveryPaidCash,
+    deliveryPaidTransfer,
     profit: netRevenue - expSum,   // ganancia neta real: bruto - delivery - gastos
     avgTicket,
     cancelled,

@@ -62,7 +62,48 @@ export const SAUCE_EXTRA_MODE_PRICE = 0.25
 export const RAMEN_TYPES = [
   { v: 'picante',   l: 'Picante'   },
   { v: 'carbonara', l: 'Carbonara' },
+  { v: 'carne',     l: 'Carne'     },
 ]
+
+// ============================================================
+//  Sabores variables (bebidas, salsa extra)
+//
+//  Estos sabores se guardan en order_items.item_flavor (columna
+//  text agregada en migración 013). No se mezclan con ramen_type
+//  para evitar confusión en reportes.
+// ============================================================
+
+// Bebida grande: sabores disponibles
+export const DRINK_LARGE_FLAVORS = [
+  'Fuze tea',
+  'Coca cola',
+  'Guitig',
+]
+
+// Bebida pequeña: sabores disponibles
+export const DRINK_SMALL_FLAVORS = [
+  'Fanta',
+  'Fanta uva',
+  'Sprite',
+  'Squizz',
+  'Fiora fresa',
+  'Fiora manzana',
+]
+
+// Devuelve los sabores aplicables a un producto, o null si no aplica.
+// Para "Salsa extra" se usan las salsas normales (SAUCES) — mismo set
+// que los combos de pollo, según pidió el negocio.
+export const flavorsForProduct = (product) => {
+  if (!product) return null
+  const name = (product.name || product.product_name || '').toLowerCase().trim()
+  if (name === 'bebida grande') return DRINK_LARGE_FLAVORS
+  if (name === 'bebida pequeña' || name === 'bebida pequena') return DRINK_SMALL_FLAVORS
+  if (name === 'salsa extra') return SAUCES
+  return null
+}
+
+// ¿Este item requiere que se elija un sabor antes de poder enviar el pedido?
+export const itemRequiresFlavor = (item) => flavorsForProduct(item) !== null
 
 // ----- Tarifas de extras -----
 // La primera salsa va incluida; cada salsa adicional cuesta este valor (por unidad × cantidad)

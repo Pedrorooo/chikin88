@@ -377,11 +377,21 @@ function OrderCard({ order, onAdvance, onCancel }) {
                 <div className="text-xs font-bold mt-0.5">
                   <span className={cx(
                     'inline-block px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide',
-                    it.ramen_type === 'picante'
-                      ? 'bg-chikin-red text-white'
-                      : 'bg-amber-500 text-white'
+                    it.ramen_type === 'picante' && 'bg-chikin-red text-white',
+                    it.ramen_type === 'carbonara' && 'bg-amber-500 text-white',
+                    it.ramen_type === 'carne' && 'bg-orange-700 text-white'
                   )}>
-                    {it.ramen_type === 'picante' ? '🔥 Picante' : '🥛 Carbonara'}
+                    {it.ramen_type === 'picante' && '🔥 Picante'}
+                    {it.ramen_type === 'carbonara' && '🥛 Carbonara'}
+                    {it.ramen_type === 'carne' && '🥩 Carne'}
+                  </span>
+                </div>
+              )}
+              {/* Sabor (bebidas con variantes / salsa extra) */}
+              {it.item_flavor && (
+                <div className="text-xs font-bold mt-0.5">
+                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-blue-600 text-white">
+                    🥤 {it.item_flavor}
                   </span>
                 </div>
               )}

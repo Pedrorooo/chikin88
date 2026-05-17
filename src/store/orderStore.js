@@ -148,6 +148,7 @@ export const useOrderStore = create((set, get) => ({
       benefit_type:     orderData.benefit_type || null,
       benefit_employee: orderData.benefit_employee || null,
       client_request_id: orderData.client_request_id || null,
+      delivery_payment_method: orderData.delivery_payment_method || null,
       items: items.map(it => ({
         product_id:       it.product_id || null,
         product_name:     it.product_name,
@@ -157,6 +158,7 @@ export const useOrderStore = create((set, get) => ({
         sauces:           it.sauces || [],
         sauce_mode:       it.sauce_mode || 'normal',
         ramen_type:       it.ramen_type || null,
+        item_flavor:      it.item_flavor || null,
         subtotal:         Number(it.subtotal ?? (it.unit_price * it.quantity)),
       })),
     }

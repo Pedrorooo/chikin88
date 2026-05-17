@@ -23,6 +23,7 @@ import {
   detectStudentPromo, isStudentDiscountEligibleItem,
   itemStudentDiscount, studentDiscountTotal,
   STUDENT_DISCOUNT_RATE, round2,
+  flavorsForProduct, itemRequiresFlavor,
 } from '../lib/utils'
 
 export default function NewOrder() {
@@ -50,6 +51,11 @@ export default function NewOrder() {
   const [orderType, setOrderType]         = useState('para_llevar')
   const [isDelivery, setIsDelivery]       = useState(false)
   const [deliveryFee, setDeliveryFee]     = useState('')
+  // Método de pago del delivery (solo aplica si isDelivery = true).
+  // Es INDEPENDIENTE de paymentMethod del pedido en sí. Por ejemplo:
+  // un pedido puede ir pagado completo en transferencia, pero el
+  // delivery puede haberse pagado al repartidor en efectivo.
+  const [deliveryPayMethod, setDeliveryPayMethod] = useState('efectivo')
   const [withMayo, setWithMayo]           = useState(true)
   const [mayoExtra, setMayoExtra]         = useState(0)
   const [utensil, setUtensil]             = useState('tenedor')
@@ -80,6 +86,7 @@ export default function NewOrder() {
       if (d.orderType)     setOrderType(d.orderType)
       if (typeof d.isDelivery === 'boolean') setIsDelivery(d.isDelivery)
       if (d.deliveryFee)   setDeliveryFee(d.deliveryFee)
+      if (d.deliveryPayMethod) setDeliveryPayMethod(d.deliveryPayMethod)
       if (typeof d.withMayo === 'boolean') setWithMayo(d.withMayo)
       if (typeof d.mayoExtra === 'number' && d.mayoExtra >= 0) setMayoExtra(d.mayoExtra)
       if (d.utensil)       setUtensil(d.utensil)
@@ -102,7 +109,7 @@ export default function NewOrder() {
   useEffect(() => {
     if (!draftRestored) return
     const draft = {
-      customerName, customerPhone, orderType, isDelivery, deliveryFee,
+      customerName, customerPhone, orderType, isDelivery, deliveryFee, deliveryPayMethod,
       withMayo, mayoExtra, utensil, paymentMethod, cashAmount, transferAmount,
       notes, benefitMode, items,
       clientRequestId: clientRequestIdRef.current,
@@ -114,7 +121,7 @@ export default function NewOrder() {
     const id = setTimeout(() => saveDraft(draft), 600)
     return () => clearTimeout(id)
   }, [
-    draftRestored, customerName, customerPhone, orderType, isDelivery, deliveryFee,
+    draftRestored, customerName, customerPhone, orderType, isDelivery, deliveryFee, deliveryPayMethod,
     withMayo, mayoExtra, utensil, paymentMethod, cashAmount, transferAmount,
     notes, benefitMode, items,
   ])
@@ -230,6 +237,10 @@ export default function NewOrder() {
       sauces: [],
       sauce_mode: isChicken ? 'normal' : null,
       ramen_type: isRamen ? 'picante' : null,
+      // Sabor variable (Bebida grande / Bebida pequeña / Salsa extra).
+      // Empieza en null; el usuario debe elegir uno desde el carrito
+      // antes de poder enviar el pedido.
+      item_flavor: null,
       is_benefit_item: isBenefitItem,
     }])
     if (isBenefitItem) {
@@ -280,6 +291,12 @@ export default function NewOrder() {
   const setRamenType = useCallback((key, type) => {
     setItems(prev => prev.map(it =>
       it.key === key ? { ...it, ramen_type: type } : it
+    ))
+  }, [])
+
+  const setItemFlavor = useCallback((key, flavor) => {
+    setItems(prev => prev.map(it =>
+      it.key === key ? { ...it, item_flavor: flavor } : it
     ))
   }, [])
 
@@ -355,7 +372,12 @@ export default function NewOrder() {
     const ramenSinTipo = items.find(it =>
       it.product_category === 'Ramen' && !it.ramen_type
     )
-    if (ramenSinTipo) return `Elige tipo (picante/carbonara) para ${ramenSinTipo.product_name}`
+    if (ramenSinTipo) return `Elige sabor para ${ramenSinTipo.product_name}`
+
+    // Validar sabor para Bebida grande / Bebida pequeña / Salsa extra
+    const sinSabor = items.find(it => itemRequiresFlavor(it) && !it.item_flavor)
+    if (sinSabor) return `Elige sabor para ${sinSabor.product_name}`
+
     return null
   }
 
@@ -425,13 +447,13 @@ export default function NewOrder() {
         order_type:       orderType,
         is_delivery:      isDelivery,
         delivery_fee:     deliveryAmount,
+        delivery_payment_method: isDelivery ? deliveryPayMethod : null,
         with_mayo:        withMayo,
         mayo_extra:       mayoExtraCount,
         utensil,
         payment_method:   paymentMethod,
         cash_amount:      paymentMethod === 'mixto' ? cashNum : 0,
         transfer_amount:  paymentMethod === 'mixto' ? transferNum : 0,
-        // Compatibilidad: algunos normalizadores antiguos leían camelCase.
         cashAmount:       paymentMethod === 'mixto' ? cashNum : 0,
         transferAmount:   paymentMethod === 'mixto' ? transferNum : 0,
         notes:            notes.trim() || null,
@@ -631,6 +653,7 @@ export default function NewOrder() {
                     onToggleSauce={toggleSauce}
                     onSetSauceMode={setSauceMode}
                     onSetRamenType={setRamenType}
+                    onSetItemFlavor={setItemFlavor}
                   />
                 ))}
               </AnimatePresence>
@@ -767,9 +790,36 @@ export default function NewOrder() {
                 ))}
               </div>
               {isDelivery && (
-                <input className="input" type="number" step="0.01" inputMode="decimal"
-                       value={deliveryFee} onChange={e => setDeliveryFee(e.target.value)}
-                       placeholder="Valor delivery $" />
+                <div className="space-y-2 mt-2">
+                  <input className="input" type="number" step="0.01" inputMode="decimal"
+                         value={deliveryFee} onChange={e => setDeliveryFee(e.target.value)}
+                         placeholder="Valor delivery $" />
+                  {/* Método de pago del valor del delivery.
+                      Independiente del método de pago del pedido. */}
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1">
+                      Delivery pagado en
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button type="button" onClick={() => setDeliveryPayMethod('efectivo')}
+                        className={cx(
+                          'py-2 rounded-lg font-semibold border-2 flex items-center justify-center gap-1 text-xs',
+                          deliveryPayMethod === 'efectivo'
+                            ? 'bg-emerald-500 border-emerald-500 text-white'
+                            : 'bg-white dark:bg-chikin-gray-800 border-zinc-200 dark:border-chikin-gray-700'
+                        )}
+                      ><Banknote size={12}/> Efectivo</button>
+                      <button type="button" onClick={() => setDeliveryPayMethod('transferencia')}
+                        className={cx(
+                          'py-2 rounded-lg font-semibold border-2 flex items-center justify-center gap-1 text-xs',
+                          deliveryPayMethod === 'transferencia'
+                            ? 'bg-blue-500 border-blue-500 text-white'
+                            : 'bg-white dark:bg-chikin-gray-800 border-zinc-200 dark:border-chikin-gray-700'
+                        )}
+                      ><ArrowRightLeft size={12}/> Transfer</button>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -1096,7 +1146,7 @@ function StudentPromoBanner({ savings }) {
 // ============================================================
 //  Item del carrito (memo para evitar re-renders)
 // ============================================================
-function CartItem({ it, isStudent, onUpdateQty, onRemove, onToggleSauce, onSetSauceMode, onSetRamenType }) {
+function CartItem({ it, isStudent, onUpdateQty, onRemove, onToggleSauce, onSetSauceMode, onSetRamenType, onSetItemFlavor }) {
   const isChicken = it.product_category === 'Principales'
   const isRamen = it.product_category === 'Ramen'
   const studentEligible = isStudent && isStudentDiscountEligibleItem(it)
@@ -1171,13 +1221,13 @@ function CartItem({ it, isStudent, onUpdateQty, onRemove, onToggleSauce, onSetSa
         </div>
       </div>
 
-      {/* RAMEN: tipo (picante/carbonara) */}
+      {/* RAMEN: tipo (picante/carbonara/carne) */}
       {isRamen && (
         <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-chikin-gray-700">
           <div className="text-xs font-bold text-zinc-600 dark:text-zinc-300 uppercase tracking-wider mb-2 flex items-center gap-1">
             <Soup size={12}/> Tipo de ramen
           </div>
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-3 gap-1.5">
             {RAMEN_TYPES.map(rt => (
               <motion.button
                 key={rt.v}
@@ -1185,20 +1235,61 @@ function CartItem({ it, isStudent, onUpdateQty, onRemove, onToggleSauce, onSetSa
                 onClick={() => onSetRamenType(it.key, rt.v)}
                 whileTap={{ scale: 0.95 }}
                 className={cx(
-                  'px-3 py-3 rounded-xl text-sm font-bold border-2 min-h-[44px] flex items-center justify-center gap-1',
+                  'px-2 py-3 rounded-xl text-sm font-bold border-2 min-h-[44px] flex items-center justify-center gap-1',
                   it.ramen_type === rt.v
                     ? rt.v === 'picante'
                       ? 'bg-chikin-red text-white border-chikin-red'
-                      : 'bg-amber-500 text-white border-amber-500'
+                      : rt.v === 'carbonara'
+                        ? 'bg-amber-500 text-white border-amber-500'
+                        : 'bg-orange-700 text-white border-orange-700'
                     : 'bg-white dark:bg-chikin-gray-800 border-zinc-200 dark:border-chikin-gray-700'
                 )}
               >
-                {rt.v === 'picante' ? <Flame size={14}/> : '🥛'} {rt.l}
+                {rt.v === 'picante' ? <Flame size={14}/>
+                  : rt.v === 'carbonara' ? '🥛'
+                  : '🥩'} {rt.l}
               </motion.button>
             ))}
           </div>
         </div>
       )}
+
+      {/* SABOR para Bebida grande / Bebida pequeña / Salsa extra */}
+      {(() => {
+        const flavors = flavorsForProduct(it)
+        if (!flavors) return null
+        const isSalsa = (it.product_name || '').toLowerCase().trim() === 'salsa extra'
+        return (
+          <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-chikin-gray-700">
+            <div className="text-xs font-bold text-zinc-600 dark:text-zinc-300 uppercase tracking-wider mb-2 flex items-center gap-1">
+              {isSalsa ? '🌶️' : '🥤'} Sabor
+              {!it.item_flavor && (
+                <span className="text-[10px] font-extrabold bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded ml-auto">
+                  ELIGE UNO
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {flavors.map(f => (
+                <motion.button
+                  key={f}
+                  type="button"
+                  onClick={() => onSetItemFlavor(it.key, f)}
+                  whileTap={{ scale: 0.95 }}
+                  className={cx(
+                    'px-2 py-2 rounded-lg text-xs font-bold border-2 min-h-[36px] flex items-center justify-center text-center leading-tight',
+                    it.item_flavor === f
+                      ? 'bg-chikin-red text-white border-chikin-red'
+                      : 'bg-white dark:bg-chikin-gray-800 border-zinc-200 dark:border-chikin-gray-700'
+                  )}
+                >
+                  {f}
+                </motion.button>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* POLLO: modo de salsa */}
       {isChicken && it.allows_extras && (
